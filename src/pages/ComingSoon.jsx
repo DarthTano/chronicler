@@ -1,7 +1,7 @@
-import { THEMES, ACTIVE_THEME } from "../theme.js";
-const t = THEMES[ACTIVE_THEME];
+import { useTheme } from "../ThemeContext.js";
 
 export default function ComingSoon({ title, phase, blurb }) {
+  const t = useTheme();
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "80px 28px", textAlign: "center" }}>
       <div style={{

@@ -1,12 +1,10 @@
 import { useState, useEffect } from "react";
-import { THEMES, ACTIVE_THEME } from "../theme.js";
+import { useTheme } from "../ThemeContext.js";
 import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
 
-const t = THEMES[ACTIVE_THEME];
-
-function HPBar({ hp }) {
+function HPBar({ hp, t }) {
   const pct = Math.max(0, Math.min(100, (hp.current / hp.max) * 100));
   const color = pct > 60 ? t.good : pct > 30 ? t.warn : t.bad;
   return (
@@ -25,7 +23,7 @@ function HPBar({ hp }) {
   );
 }
 
-function StatBox({ stat, score, mod }) {
+function StatBox({ stat, score, mod, t }) {
   const sign = mod >= 0 ? "+" : "";
   return (
     <div style={{ flex: "1 1 0", minWidth: 0, background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: t.radius, padding: "12px 6px", textAlign: "center" }}>
@@ -36,11 +34,12 @@ function StatBox({ stat, score, mod }) {
   );
 }
 
-function Pip({ filled }) {
+function Pip({ filled, t }) {
   return <div style={{ width: 11, height: 11, borderRadius: "50%", border: `1.5px solid ${t.borderStrong}`, background: filled ? t.accent : "transparent" }} />;
 }
 
 export default function CharactersPage() {
+  const t = useTheme();
   const [selectedId, setSelectedId] = useState(1);
   const [activeTab, setActiveTab] = useState("stats");
   const [showDM, setShowDM] = useState(false);
@@ -150,7 +149,7 @@ export default function CharactersPage() {
           ))}
         </div>
 
-        <div style={{ ...card, padding: "16px 18px", marginBottom: 16 }}><HPBar hp={char.hp} /></div>
+        <div style={{ ...card, padding: "16px 18px", marginBottom: 16 }}><HPBar hp={char.hp} t={t} /></div>
 
         <div style={{ ...card, marginBottom: 16, overflow: "hidden" }}>
           <button onClick={() => setShowDM(!showDM)} style={{ width: "100%", background: showDM ? t.accentSoft : "transparent", border: "none", cursor: "pointer", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -170,14 +169,14 @@ export default function CharactersPage() {
         {activeTab === "stats" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ display: "flex", gap: 8 }}>
-              {STAT_ORDER.map(s => <StatBox key={s} stat={s} score={char.statScores[s]} mod={char.stats[s]} />)}
+              {STAT_ORDER.map(s => <StatBox key={s} stat={s} score={char.statScores[s]} mod={char.stats[s]} t={t} />)}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 }}>
               <div style={{ ...card, padding: 16 }}>
                 <h3 style={{ margin: "0 0 12px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Saving Throws</h3>
                 {STAT_ORDER.map(s => (
                   <div key={s} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                    <Pip filled={char.saveProf[s]} />
+                    <Pip filled={char.saveProf[s]} t={t} />
                     <span style={{ fontSize: 13, color: t.textMid, flex: 1 }}>{s}</span>
                     <span style={{ fontSize: 14, fontWeight: 700 }}>{char.saves[s] >= 0 ? "+" : ""}{char.saves[s]}</span>
                   </div>
@@ -187,7 +186,7 @@ export default function CharactersPage() {
                 <h3 style={{ margin: "0 0 12px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Skills</h3>
                 {char.skills.map(sk => (
                   <div key={sk.name} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                    <Pip filled={sk.prof} />
+                    <Pip filled={sk.prof} t={t} />
                     <span style={{ fontSize: 13, color: t.textMid, flex: 1 }}>{sk.name}</span>
                     <span style={{ fontSize: 14, fontWeight: 700 }}>{sk.mod >= 0 ? "+" : ""}{sk.mod}</span>
                   </div>

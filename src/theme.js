@@ -1,7 +1,3 @@
-// Shared theme tokens for Chronicler.
-// The prototype shipped four candidate themes; lock your pick here and
-// every page/component reads from the same source of truth.
-
 export const THEMES = {
   clean: {
     label: "Clean & Modern",
@@ -39,7 +35,16 @@ export const THEMES = {
     good: "#34d399", warn: "#fbbf24", bad: "#fb7185", temp: "#22d3ee",
     radius: "16px",
   },
+  grimoire: {
+    label: "Grimoire",
+    bg: "#0e1409", panel: "#151c0f", panelAlt: "#1a2213",
+    border: "#2a3820", borderStrong: "#3a4f2c",
+    text: "#e8dfc0", textMid: "#a89f7a", textDim: "#6b6448",
+    accent: "#c8a84b", accentSoft: "#1e1e0a",
+    good: "#6abf69", warn: "#d4883a", bad: "#c0392b", temp: "#4aadcc",
+    radius: "8px",
+  },
 };
 
-// Your chosen default. Change this one line to re-theme the whole app.
-export const ACTIVE_THEME = "clean";
+export const THEME_ORDER = ["clean", "sleek", "soft", "bold", "grimoire"];
+export const DEFAULT_THEME = "clean";
