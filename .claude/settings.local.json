@@ -11,7 +11,12 @@
       "Bash(npm install *)",
       "PowerShell(Get-ChildItem \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"C:\\\\Program Files \\(x86\\)\\\\nodejs\\\\node.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:APPDATA\\\\npm\\\\node.exe\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:LOCALAPPDATA\\\\Programs\\\\nodejs\\\\node.exe\" -ErrorAction SilentlyContinue)",
       "mcp__Claude_Preview__preview_start",
-      "mcp__Claude_in_Chrome__navigate"
+      "mcp__Claude_in_Chrome__navigate",
+      "Bash(grep -oE '\\(groupId|rollId|sides|dieType|\"value\"|value:|qty:|modifier\\)[^,;{}]{0,30}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
+      "Bash(grep -oE 'onRollComplete[^;]{0,80}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
+      "Bash(grep -oE '\\(getRollResults|rollGroup|\\\\.rolls\\)[^;{]{0,60}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
+      "Bash(grep -oE 'getRollResults\\\\\\(\\\\\\)[^}]{0,260}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
+      "Bash(node -e ' *)"
     ]
   }
 }
