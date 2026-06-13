@@ -28,5 +28,36 @@ create policy "Users can create their own profile"
 create policy "Users can update their own profile"
   on public.profiles for update to authenticated using (auth.uid() = id);
 
+-- ── Characters ──────────────────────────────────────────────────────────────
+-- A saved character sheet per row. The full computed sheet lives in `data`
+-- (jsonb); name/race/class/level are mirrored as columns for cheap listing.
+create table if not exists public.characters (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  race text,
+  class text,
+  level int not null default 1,
+  data jsonb not null default '{}',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.characters enable row level security;
+
+drop policy if exists "Users can read their own characters" on public.characters;
+drop policy if exists "Users can create their own characters" on public.characters;
+drop policy if exists "Users can update their own characters" on public.characters;
+drop policy if exists "Users can delete their own characters" on public.characters;
+
+create policy "Users can read their own characters"
+  on public.characters for select to authenticated using (auth.uid() = user_id);
+create policy "Users can create their own characters"
+  on public.characters for insert to authenticated with check (auth.uid() = user_id);
+create policy "Users can update their own characters"
+  on public.characters for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users can delete their own characters"
+  on public.characters for delete to authenticated using (auth.uid() = user_id);
+
 -- Refresh PostgREST's schema cache so the API sees changes immediately.
 notify pgrst, 'reload schema';

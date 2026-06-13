@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useTheme } from "../ThemeContext.js";
+import { useAuth } from "../AuthContext.jsx";
+import { supabase } from "../lib/supabase.js";
 import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
@@ -40,15 +43,18 @@ function Pip({ filled, t }) {
 
 export default function CharactersPage() {
   const t = useTheme();
-  const [selectedId, setSelectedId] = useState(1);
+  const { user, configured } = useAuth();
+  const [selectedId, setSelectedId] = useState(null);
   const [activeTab, setActiveTab] = useState("stats");
   const [showDM, setShowDM] = useState(false);
-  const [characters, setCharacters] = useState(SAMPLE_CHARACTERS);
+  const [characters, setCharacters] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [condOpen, setCondOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
   const char = characters.find(c => c.id === selectedId);
+  const isDemo = !configured || !user;
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 760);
@@ -56,6 +62,32 @@ export default function CharactersPage() {
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // Load the signed-in user's saved characters; fall back to the sample party
+  // as a read-only demo when logged out (or Supabase isn't configured).
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      if (!configured || !user) {
+        if (!cancelled) {
+          setCharacters(SAMPLE_CHARACTERS);
+          setSelectedId(SAMPLE_CHARACTERS[0].id);
+          setLoading(false);
+        }
+        return;
+      }
+      const { data } = await supabase
+        .from("characters").select("*").eq("user_id", user.id).order("created_at", { ascending: true });
+      if (cancelled) return;
+      const list = (data || []).map(row => ({ ...row.data, id: row.id }));
+      setCharacters(list);
+      setSelectedId(list[0]?.id ?? null);
+      setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [user, configured]);
 
   function addCondition(c) {
     setCharacters(prev => prev.map(ch => ch.id === selectedId && !ch.conditions.includes(c) ? { ...ch, conditions: [...ch.conditions, c] } : ch));
@@ -66,8 +98,31 @@ export default function CharactersPage() {
   }
   function pickChar(id) { setSelectedId(id); if (isMobile) setSidebarOpen(false); }
 
-  const tabs = ["stats", "spells", "features", "gear"];
+  const tabs = ["stats", "spells", "features", "gear", ...(char?.bio ? ["bio"] : [])];
   const card = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: t.radius };
+
+  if (loading) {
+    return <div style={{ padding: 60, textAlign: "center", color: t.textDim }}>Loading your party…</div>;
+  }
+
+  // Signed in with no characters yet — invite them to build one.
+  if (!isDemo && characters.length === 0) {
+    return (
+      <div style={{ maxWidth: 460, margin: "0 auto", padding: "90px 28px", textAlign: "center" }}>
+        <div style={{ fontSize: 52, marginBottom: 12 }}>🎭</div>
+        <h1 style={{ fontSize: 26, marginBottom: 10 }}>No heroes yet</h1>
+        <p style={{ color: t.textMid, fontSize: 16, lineHeight: 1.6, marginBottom: 26 }}>
+          Your roster is empty. Forge your first character and it'll live here.
+        </p>
+        <Link to="/build" style={{
+          textDecoration: "none", display: "inline-block", background: t.accent, color: "#fff",
+          borderRadius: 9, padding: "12px 24px", fontSize: 15, fontWeight: 700,
+        }}>⚔ Create a character</Link>
+      </div>
+    );
+  }
+
+  if (!char) return null;
 
   return (
     <div style={{ display: "flex", position: "relative", minHeight: "calc(100vh - 56px)" }}>
@@ -107,7 +162,17 @@ export default function CharactersPage() {
             </button>
           );
         })}
-        <button style={{ width: "100%", marginTop: 8, background: "transparent", border: `1.5px dashed ${t.border}`, borderRadius: t.radius, color: t.textDim, padding: 10, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>+ Import from D&D Beyond</button>
+        <Link to="/build" style={{
+          display: "block", textAlign: "center", textDecoration: "none",
+          width: "100%", marginTop: 8, boxSizing: "border-box",
+          background: "transparent", border: `1.5px dashed ${t.border}`, borderRadius: t.radius,
+          color: t.accent, padding: 10, cursor: "pointer", fontSize: 12, fontWeight: 700,
+        }}>+ New character</Link>
+        {isDemo && (
+          <div style={{ fontSize: 10, color: t.textDim, textAlign: "center", marginTop: 8, lineHeight: 1.4 }}>
+            Sample party shown — sign in to build your own.
+          </div>
+        )}
       </aside>
 
       {isMobile && sidebarOpen && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 50 }} />}
@@ -256,6 +321,33 @@ export default function CharactersPage() {
               <div key={i} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 16 }}>{item.includes("gp") ? "🪙" : item.includes("Armor") ? "🛡️" : /Axe|Dagger|Staff/.test(item) ? "⚔️" : item.includes("Pack") ? "🎒" : "✨"}</span>
                 <span style={{ fontSize: 13, color: t.textMid }}>{item}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "bio" && char.bio && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+              <div style={{ ...card, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Alignment</div>
+                <div style={{ fontSize: 14, color: t.textMid }}>{char.bio.alignment || "—"}</div>
+              </div>
+              <div style={{ ...card, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Languages</div>
+                <div style={{ fontSize: 14, color: t.textMid }}>{char.bio.languages?.length ? char.bio.languages.join(", ") : "—"}</div>
+              </div>
+            </div>
+            {[
+              ["Personality", char.bio.personality],
+              ["Ideals", char.bio.ideals],
+              ["Bonds", char.bio.bonds],
+              ["Flaws", char.bio.flaws],
+              ["Backstory", char.bio.backstory],
+            ].filter(([, v]) => v).map(([label, v]) => (
+              <div key={label} style={{ ...card, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>{label}</div>
+                <div style={{ fontSize: 14, color: t.textMid, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{v}</div>
               </div>
             ))}
           </div>
