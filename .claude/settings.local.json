@@ -16,7 +16,8 @@
       "Bash(grep -oE 'onRollComplete[^;]{0,80}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
       "Bash(grep -oE '\\(getRollResults|rollGroup|\\\\.rolls\\)[^;{]{0,60}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
       "Bash(grep -oE 'getRollResults\\\\\\(\\\\\\)[^}]{0,260}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }

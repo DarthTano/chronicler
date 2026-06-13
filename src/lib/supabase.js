@@ -1,15 +1,13 @@
-// Supabase client — wired up in Phase 1.
-//
-// When you're ready:
-//   1. npm install @supabase/supabase-js
-//   2. Fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env
-//   3. Uncomment the code below.
-//
-// import { createClient } from "@supabase/supabase-js";
-//
-// const url = import.meta.env.VITE_SUPABASE_URL;
-// const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-//
-// export const supabase = createClient(url, anonKey);
+// Supabase client. Reads credentials from .env (VITE_SUPABASE_URL,
+// VITE_SUPABASE_ANON_KEY). Copy .env.example to .env and fill them in.
 
-export const supabase = null; // placeholder until Phase 1 backend work
+import { createClient } from "@supabase/supabase-js";
+
+const url = import.meta.env.VITE_SUPABASE_URL;
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// True only when both env vars are present — lets the UI show a friendly
+// "not configured" state instead of throwing on a missing client.
+export const isSupabaseConfigured = Boolean(url && anonKey);
+
+export const supabase = isSupabaseConfigured ? createClient(url, anonKey) : null;

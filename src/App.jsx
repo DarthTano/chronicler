@@ -2,10 +2,14 @@ import { useState, useEffect } from "react";
 import { NavLink, Routes, Route } from "react-router-dom";
 import { THEMES, THEME_ORDER, DEFAULT_THEME } from "./theme.js";
 import { ThemeContext } from "./ThemeContext.js";
+import { useAuth } from "./AuthContext.jsx";
+import AuthModal from "./components/AuthModal.jsx";
+import Onboarding from "./components/Onboarding.jsx";
 import CharactersPage from "./pages/CharactersPage.jsx";
 import CompendiumPage from "./pages/CompendiumPage.jsx";
 import DicePage from "./pages/DicePage.jsx";
 import ComingSoon from "./pages/ComingSoon.jsx";
+import NotFound from "./pages/NotFound.jsx";
 
 const NAV = [
   { to: "/characters", label: "Characters", phase: 1 },
@@ -28,6 +32,9 @@ export default function App() {
   const [themeName, setThemeName] = useState(DEFAULT_THEME);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { user, profile, needsOnboarding, configured, signOut } = useAuth();
   const t = THEMES[themeName];
 
   useEffect(() => {
@@ -103,9 +110,64 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {/* Auth control — only shown once Supabase keys are configured */}
+          {configured && (
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              {user ? (
+                <>
+                  <button
+                    onClick={() => setUserMenuOpen(o => !o)}
+                    title={profile?.username || user.email}
+                    style={{
+                      width: 34, height: 34, borderRadius: "50%", cursor: "pointer",
+                      background: profile?.avatar ? t.accentSoft : t.accent,
+                      color: "#fff", border: `1px solid ${t.border}`,
+                      fontSize: profile?.avatar ? 18 : 14, fontWeight: 700, textTransform: "uppercase",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    {profile?.avatar || user.email?.[0] || "?"}
+                  </button>
+                  {userMenuOpen && (
+                    <div style={{
+                      position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 200,
+                      background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12,
+                      padding: 6, minWidth: 200, boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+                    }}>
+                      <div style={{ padding: "8px 12px", borderBottom: `1px solid ${t.border}`, marginBottom: 4 }}>
+                        {profile?.username && <div style={{ fontSize: 14, fontWeight: 700, color: t.text }}>{profile.avatar} {profile.username}</div>}
+                        <div style={{ fontSize: 12, color: t.textDim, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</div>
+                      </div>
+                      <button
+                        onClick={async () => { setUserMenuOpen(false); await signOut(); }}
+                        style={{
+                          width: "100%", textAlign: "left", background: "transparent", border: "none",
+                          borderRadius: 8, padding: "9px 12px", cursor: "pointer",
+                          color: t.textMid, fontSize: 13, fontWeight: 600,
+                        }}
+                      >Sign out</button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <button
+                  onClick={() => setAuthOpen(true)}
+                  style={{
+                    background: t.accent, color: "#fff", border: "none", borderRadius: 8,
+                    padding: isMobile ? "8px 12px" : "8px 16px", cursor: "pointer",
+                    fontSize: 13, fontWeight: 700, whiteSpace: "nowrap",
+                  }}
+                >Sign in</button>
+              )}
+            </div>
+          )}
         </header>
 
-        <main style={{ flex: 1 }} onClick={() => pickerOpen && setPickerOpen(false)}>
+        {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}
+        {needsOnboarding && <Onboarding />}
+
+        <main style={{ flex: 1 }} onClick={() => { if (pickerOpen) setPickerOpen(false); if (userMenuOpen) setUserMenuOpen(false); }}>
           <Routes>
             <Route path="/" element={<CharactersPage />} />
             <Route path="/characters" element={<CharactersPage />} />
@@ -114,6 +176,7 @@ export default function App() {
             <Route path="/dm-screen" element={<ComingSoon title="DM Screen" phase={3} blurb="Combat tracker, encounter builder, NPCs and world notes — wired into real character data." />} />
             <Route path="/campaigns" element={<ComingSoon title="Campaigns" phase={4} blurb="The shared table. Link DMs and players, with live initiative everyone watches." />} />
             <Route path="/community" element={<ComingSoon title="Community" phase={5} blurb="Share and discover homebrew, adventures, and AI-generated content." />} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
       </div>
