@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { NavLink, Routes, Route } from "react-router-dom";
 import { THEMES, THEME_ORDER, DEFAULT_THEME } from "./theme.js";
 import { ThemeContext } from "./ThemeContext.js";
@@ -27,19 +27,27 @@ const THEME_DOTS = {
 export default function App() {
   const [themeName, setThemeName] = useState(DEFAULT_THEME);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const t = THEMES[themeName];
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 760);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   return (
     <ThemeContext.Provider value={t}>
       <div style={{ minHeight: "100%", background: t.bg, color: t.text, display: "flex", flexDirection: "column" }}>
         <header style={{
           background: t.panel, borderBottom: `1px solid ${t.border}`,
-          padding: "0 20px", height: 56, display: "flex", alignItems: "center", gap: 20,
-          position: "sticky", top: 0, zIndex: 50,
+          padding: isMobile ? "0 12px" : "0 20px", height: 56, display: "flex", alignItems: "center",
+          gap: isMobile ? 10 : 20, position: "sticky", top: 0, zIndex: 50,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <span style={{ fontSize: 22 }}>📖</span>
-            <strong style={{ fontSize: 16, letterSpacing: 0.3 }}>Chronicler</strong>
+            {!isMobile && <strong style={{ fontSize: 16, letterSpacing: 0.3 }}>Chronicler</strong>}
           </div>
 
           <nav style={{ display: "flex", gap: 4, overflowX: "auto", flex: 1 }}>
@@ -60,12 +68,12 @@ export default function App() {
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 background: t.panelAlt, border: `1px solid ${t.border}`,
-                borderRadius: 8, padding: "6px 12px", cursor: "pointer",
+                borderRadius: 8, padding: isMobile ? "8px 10px" : "6px 12px", cursor: "pointer",
                 color: t.textMid, fontSize: 13, fontWeight: 600,
               }}
             >
-              <span style={{ width: 10, height: 10, borderRadius: "50%", background: THEME_DOTS[themeName], display: "inline-block" }} />
-              {THEMES[themeName].label}
+              <span style={{ width: 10, height: 10, borderRadius: "50%", background: THEME_DOTS[themeName], display: "inline-block", flexShrink: 0 }} />
+              {!isMobile && THEMES[themeName].label}
               <span style={{ fontSize: 10, opacity: 0.6 }}>▾</span>
             </button>
 
