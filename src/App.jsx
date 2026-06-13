@@ -3,6 +3,7 @@ import { NavLink, Routes, Route } from "react-router-dom";
 import { THEMES, THEME_ORDER, DEFAULT_THEME } from "./theme.js";
 import { ThemeContext } from "./ThemeContext.js";
 import CharactersPage from "./pages/CharactersPage.jsx";
+import CompendiumPage from "./pages/CompendiumPage.jsx";
 import ComingSoon from "./pages/ComingSoon.jsx";
 
 const NAV = [
@@ -99,7 +100,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<CharactersPage />} />
             <Route path="/characters" element={<CharactersPage />} />
-            <Route path="/compendium" element={<ComingSoon title="Compendium" phase={1} blurb="Searchable SRD spells, monsters, and items — the data backbone every other tool reads from." />} />
+            <Route path="/compendium" element={<CompendiumPage />} />
             <Route path="/dice" element={<ComingSoon title="Dice Roller" phase={1} blurb="A universal roller with advantage, modifiers, and roll history." />} />
             <Route path="/dm-screen" element={<ComingSoon title="DM Screen" phase={3} blurb="Combat tracker, encounter builder, NPCs and world notes — wired into real character data." />} />
             <Route path="/campaigns" element={<ComingSoon title="Campaigns" phase={4} blurb="The shared table. Link DMs and players, with live initiative everyone watches." />} />
