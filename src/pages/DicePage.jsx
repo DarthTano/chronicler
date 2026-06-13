@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useTheme } from "../ThemeContext.js";
+import { playDiceRoll, preloadDice, playCritSuccess, playCritFail } from "../lib/sound.js";
 
 const DICE = [4, 6, 8, 10, 12, 20, 100];
 
@@ -66,6 +67,8 @@ export default function DicePage() {
   const [history, setHistory] = useState([]);
   const [ready, setReady] = useState(false);
   const [rolling, setRolling] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const [diceFading, setDiceFading] = useState(false);
   const [vp, setVp] = useState(() => ({
     w: typeof window !== "undefined" ? window.innerWidth : 1280,
     h: typeof window !== "undefined" ? window.innerHeight : 800,
@@ -75,6 +78,8 @@ export default function DicePage() {
   const pendingRef = useRef(null);   // { modifier, mode } captured at roll time
   const accentRef = useRef(t.accent);
   accentRef.current = t.accent;
+  const fadeTimer = useRef(null);
+  const clearTimer = useRef(null);
 
   const totalDice = DICE.reduce((n, s) => n + (pool[s] || 0), 0);
   const hasD20 = (pool[20] || 0) > 0;
@@ -110,6 +115,28 @@ export default function DicePage() {
     setResult(r);
     setHistory(h => [{ ...r, expr: exprFromGroups(outGroups, pending.modifier) }, ...h].slice(0, 15));
     setRolling(false);
+
+    // Celebrate (or mourn) on ANY d20 that lands on 20 or 1, whatever else is
+    // in the pool. Both can fire if one d20 nats and another fumbles.
+    if (soundOn) {
+      const d20 = r.groups.find(g => g.sides === 20);
+      if (d20) {
+        const values = d20.rolls.map(x => x.value);
+        if (values.includes(20)) playCritSuccess();
+        if (values.includes(1)) playCritFail();
+      }
+    }
+
+    // Let the result linger, then fade the dice off the table and clear them.
+    clearTimeout(fadeTimer.current);
+    clearTimeout(clearTimer.current);
+    fadeTimer.current = setTimeout(() => {
+      setDiceFading(true);
+      clearTimer.current = setTimeout(() => {
+        try { boxRef.current?.clear(); } catch { /* no-op */ }
+        setDiceFading(false);
+      }, 650);
+    }, 1800);
   }
   const handleResultsRef = useRef(handleResults);
   handleResultsRef.current = handleResults;
@@ -117,6 +144,7 @@ export default function DicePage() {
   // Initialise the 3D dice box once (dynamic import keeps Babylon off other pages).
   useEffect(() => {
     let cancelled = false;
+    preloadDice();
     const stage = document.getElementById("dice-stage");
     if (stage) stage.innerHTML = "";
 
@@ -141,6 +169,8 @@ export default function DicePage() {
     return () => {
       cancelled = true;
       boxRef.current = null;
+      clearTimeout(fadeTimer.current);
+      clearTimeout(clearTimer.current);
       const s = document.getElementById("dice-stage");
       if (s) s.innerHTML = "";
     };
@@ -192,8 +222,13 @@ export default function DicePage() {
       else notation.push(`${count}d${sides}`);
     }
     pendingRef.current = { modifier, mode: effMode };
+    // Cancel any pending fade so a fresh roll is fully visible.
+    clearTimeout(fadeTimer.current);
+    clearTimeout(clearTimer.current);
+    setDiceFading(false);
     setRolling(true);
     setResult(null);
+    if (soundOn) playDiceRoll();
     try {
       boxRef.current.roll(notation);
     } catch {
@@ -216,6 +251,7 @@ export default function DicePage() {
           it responsive on desktop and mobile, re-fitting on resize/rotate. */}
       <div style={{
         position: "fixed", inset: 0, zIndex: 40, pointerEvents: "none", overflow: "hidden",
+        opacity: diceFading ? 0 : 1, transition: "opacity 0.6s ease",
       }}>
         <div id="dice-stage" style={{
           width: vp.w * 2, height: vp.h * 2,
@@ -224,6 +260,14 @@ export default function DicePage() {
       </div>
 
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "24px 20px 48px", display: "flex", flexDirection: "column", gap: 16, position: "relative" }}>
+
+        {/* Sound toggle */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: -4 }}>
+          <button onClick={() => setSoundOn(s => !s)} title={soundOn ? "Mute dice" : "Unmute dice"} aria-label={soundOn ? "Mute dice" : "Unmute dice"}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: t.panelAlt, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: t.textMid, fontSize: 13, fontWeight: 600 }}>
+            <span>{soundOn ? "🔊" : "🔇"}</span> Sound
+          </button>
+        </div>
 
         {/* ── Result stage ── */}
         <div style={{

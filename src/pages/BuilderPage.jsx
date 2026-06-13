@@ -44,6 +44,7 @@ export default function BuilderPage() {
   const [scores, setScores] = useState({ STR: 8, DEX: 8, CON: 8, INT: 8, WIS: 8, CHA: 8 });
   const [arrayAssign, setArrayAssign] = useState({ STR: "", DEX: "", CON: "", INT: "", WIS: "", CHA: "" });
   const [asiAssign, setAsiAssign] = useState([]); // ability per racial increment
+  const [rolled, setRolled] = useState({}); // ability -> { dice:[{v,rerolled}] }
   const [chosenSkills, setChosenSkills] = useState([]);
   const [bio, setBio] = useState({
     alignment: "", languages: ["Common"], personality: "", ideals: "", bonds: "", flaws: "", backstory: "",
@@ -91,7 +92,10 @@ export default function BuilderPage() {
 
   const baseScores = method === "array"
     ? Object.fromEntries(ABILITIES.map(a => [a, Number(arrayAssign[a]) || 8]))
+    : method === "roll"
+    ? Object.fromEntries(ABILITIES.map(a => [a, rolled[a] ? keptScore(rolled[a].dice) : 8]))
     : scores;
+  const rollComplete = ABILITIES.every(a => rolled[a]);
   const finalScores = Object.fromEntries(ABILITIES.map(a => [a, baseScores[a] + (raceBonuses[a] || 0)]));
 
   const pointsSpent = ABILITIES.reduce((sum, a) => sum + (POINT_BUY_COST[scores[a]] ?? 0), 0);
@@ -107,7 +111,7 @@ export default function BuilderPage() {
     Boolean(race),
     Boolean(cls),
     Boolean(background),
-    method === "array" ? arrayComplete : pointsSpent <= POINT_BUY_BUDGET,
+    method === "array" ? arrayComplete : method === "roll" ? rollComplete : pointsSpent <= POINT_BUY_BUDGET,
     chosenSkills.length === skillNeeded,
     true, // Roleplay — all optional
     true, // Review
@@ -127,6 +131,23 @@ export default function BuilderPage() {
       const trialSpent = ABILITIES.reduce((s, a) => s + (POINT_BUY_COST[a === ab ? next : prev[a]] ?? 0), 0);
       if (trialSpent > POINT_BUY_BUDGET) return prev;
       return { ...prev, [ab]: next };
+    });
+  }
+
+  // 4d6 drop lowest. Any 1 may be rerolled once (player's choice).
+  const d6 = () => 1 + Math.floor(Math.random() * 6);
+  function roll4d6() { return Array.from({ length: 4 }, () => ({ v: d6(), rerolled: false })); }
+  function keptScore(dice) {
+    return dice.map(d => d.v).sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0);
+  }
+  function rollAbility(ab) { setRolled(prev => ({ ...prev, [ab]: { dice: roll4d6() } })); }
+  function rollAllAbilities() { setRolled(Object.fromEntries(ABILITIES.map(a => [a, { dice: roll4d6() }]))); }
+  function rerollDie(ab, i) {
+    setRolled(prev => {
+      const cur = prev[ab];
+      if (!cur) return prev;
+      const dice = cur.dice.map((d, j) => (j === i && d.v === 1 && !d.rerolled ? { v: d6(), rerolled: true } : d));
+      return { ...prev, [ab]: { dice } };
     });
   }
 
@@ -317,9 +338,10 @@ export default function BuilderPage() {
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
                 <h3 style={{ fontSize: 18 }}>Ability scores</h3>
-                <div style={{ display: "flex", gap: 4, background: t.panelAlt, padding: 4, borderRadius: 9, border: `1px solid ${t.border}` }}>
+                <div style={{ display: "flex", gap: 4, background: t.panelAlt, padding: 4, borderRadius: 9, border: `1px solid ${t.border}`, flexWrap: "wrap" }}>
                   <button onClick={() => setMethod("pointbuy")} style={{ ...pill(method === "pointbuy"), border: "none", cursor: "pointer" }}>Point buy</button>
                   <button onClick={() => setMethod("array")} style={{ ...pill(method === "array"), border: "none", cursor: "pointer" }}>Standard array</button>
+                  <button onClick={() => setMethod("roll")} style={{ ...pill(method === "roll"), border: "none", cursor: "pointer" }}>Roll 4d6</button>
                 </div>
               </div>
 
@@ -330,6 +352,12 @@ export default function BuilderPage() {
               )}
               {method === "array" && (
                 <div style={{ fontSize: 13, color: t.textMid, marginBottom: 14 }}>Assign each value — {STANDARD_ARRAY.join(", ")}</div>
+              )}
+              {method === "roll" && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, color: t.textMid }}>Roll 4d6, keep the highest 3. Any <strong style={{ color: t.text }}>1</strong> can be rerolled once (↻).</span>
+                  <button onClick={rollAllAbilities} style={{ background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>🎲 Roll all</button>
+                </div>
               )}
 
               {increments.length > 0 && (
@@ -361,7 +389,7 @@ export default function BuilderPage() {
                   const final = finalScores[ab];
                   const racial = raceBonuses[ab] || 0;
                   return (
-                    <div key={ab} style={{ display: "flex", alignItems: "center", gap: 12, background: t.panelAlt, borderRadius: 10, padding: "10px 14px" }}>
+                    <div key={ab} style={{ display: "flex", alignItems: "center", gap: 12, background: t.panelAlt, borderRadius: 10, padding: "10px 14px", flexWrap: "wrap" }}>
                       <div style={{ width: 36, fontWeight: 700, color: t.textMid }}>{ab}</div>
                       {method === "pointbuy" ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -369,7 +397,7 @@ export default function BuilderPage() {
                           <div style={{ width: 24, textAlign: "center", fontWeight: 700, fontSize: 16 }}>{scores[ab]}</div>
                           <button onClick={() => adjustScore(ab, 1)} style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel, color: t.text, cursor: "pointer", fontWeight: 700 }}>+</button>
                         </div>
-                      ) : (
+                      ) : method === "array" ? (
                         <select value={arrayAssign[ab]} onChange={e => setArrayAssign(p => ({ ...p, [ab]: e.target.value }))}
                           style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel, color: t.text, fontSize: 14 }}>
                           <option value="">—</option>
@@ -381,6 +409,32 @@ export default function BuilderPage() {
                             return <option key={i} value={v} disabled={copiesUsed >= copiesNeeded && Number(arrayAssign[ab]) !== v && usedElsewhere}>{v}</option>;
                           })}
                         </select>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          {rolled[ab] ? (() => {
+                            const dice = rolled[ab].dice;
+                            const lowIdx = dice.reduce((lo, d, i, arr) => (d.v < arr[lo].v ? i : lo), 0);
+                            return (
+                              <>
+                                {dice.map((d, i) => {
+                                  const dropped = i === lowIdx;
+                                  const canReroll = d.v === 1 && !d.rerolled;
+                                  return (
+                                    <span key={i} style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                                      <span style={{ width: 26, height: 26, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, background: t.panel, border: `1px solid ${t.border}`, color: dropped ? t.textDim : t.text, opacity: dropped ? 0.5 : 1, textDecoration: dropped ? "line-through" : "none" }}>{d.v}</span>
+                                      {canReroll
+                                        ? <button onClick={() => rerollDie(ab, i)} title="Reroll this 1" style={{ fontSize: 11, lineHeight: 1, color: t.accent, background: "none", border: "none", cursor: "pointer", padding: 0 }}>↻</button>
+                                        : <span style={{ height: 12 }} />}
+                                    </span>
+                                  );
+                                })}
+                                <button onClick={() => rollAbility(ab)} title="Reroll all four" style={{ marginLeft: 4, fontSize: 12, color: t.textMid, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>↻</button>
+                              </>
+                            );
+                          })() : (
+                            <button onClick={() => rollAbility(ab)} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 16px", fontSize: 13, fontWeight: 600, color: t.text, cursor: "pointer" }}>Roll 4d6</button>
+                          )}
+                        </div>
                       )}
                       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
                         {racial > 0 && <span style={{ fontSize: 11, color: t.accent }}>racial {fmtMod(racial)}</span>}

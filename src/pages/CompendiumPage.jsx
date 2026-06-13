@@ -318,6 +318,7 @@ export default function CompendiumPage() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Spell filters
   const [spellLevel, setSpellLevel] = useState(null);
@@ -329,6 +330,13 @@ export default function CompendiumPage() {
   const [itemRarity, setItemRarity] = useState(null);
 
   const debounceRef = useRef(null);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 760);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // Debounce search query
   useEffect(() => {
@@ -359,10 +367,11 @@ export default function CompendiumPage() {
       if (tab === "spells") {
         endpoint = "spells";
         if (spellLevel !== null) params.set("level_int", spellLevel === "Cantrip" ? "0" : spellLevel);
-        if (spellSchool) params.set("school", spellSchool.toLowerCase());
+        // Open5e's school/type filters are case-sensitive (capitalized); rarity is lowercase.
+        if (spellSchool) params.set("school", spellSchool);
       } else if (tab === "monsters") {
         endpoint = "monsters";
-        if (monsterType) params.set("type", monsterType.toLowerCase());
+        if (monsterType) params.set("type", monsterType);
         if (monsterCR) {
           const crMap = { "1/8": "0.125", "1/4": "0.25", "1/2": "0.5" };
           params.set("challenge_rating", crMap[monsterCR] ?? monsterCR);
@@ -397,8 +406,10 @@ export default function CompendiumPage() {
 
       {/* ── Left panel ── */}
       <div style={{
-        width: hasDetail ? 380 : "100%", flexShrink: 0,
-        display: "flex", flexDirection: "column", borderRight: hasDetail ? `1px solid ${t.border}` : "none",
+        width: hasDetail ? (isMobile ? 0 : 380) : "100%", flexShrink: 0,
+        // On mobile, the detail takes over the whole screen, so hide the list.
+        display: isMobile && hasDetail ? "none" : "flex",
+        flexDirection: "column", borderRight: hasDetail && !isMobile ? `1px solid ${t.border}` : "none",
         transition: "width 0.2s ease",
       }}>
 

@@ -1,0 +1,18 @@
+﻿Sound credits for Chronicler
+=============================
+
+Dice roll — "2 dice roll (29 throws)" by RPG
+  https://opengameart.org/content/2-dice-roll-29-throws
+  License: CC0 1.0 (Public Domain) — no attribution required
+  Files: dice-roll-1.wav, dice-roll-2.wav, dice-roll-3.wav
+
+Crit fail scream — "human male scream multi" by JohnsonBrandEditing
+  https://freesound.org/people/JohnsonBrandEditing/sounds/173944/
+  (via "Aargh!" pack: https://opengameart.org/content/aargh-male-screams)
+  License: CC0 1.0 (Public Domain) — no attribution required
+  File: crit-fail.ogg (aargh6)
+
+Crit success cheer — "Free Crowd Cheering Sounds" by Gregor Quendel
+  https://opengameart.org/content/free-crowd-cheering-sounds
+  License: CC-BY 4.0 — attribution required (this file)
+  File: crit-success.mp3 (track 04, "Strong cheering - II - Short")

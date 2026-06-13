@@ -17,7 +17,9 @@
       "Bash(grep -oE '\\(getRollResults|rollGroup|\\\\.rolls\\)[^;{]{0,60}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
       "Bash(grep -oE 'getRollResults\\\\\\(\\\\\\)[^}]{0,260}' \"node_modules/@3d-dice/dice-box/dist/dice-box.es.js\")",
       "Bash(node -e ' *)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "WebSearch",
+      "WebFetch(domain:opengameart.org)"
     ]
   }
 }
