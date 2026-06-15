@@ -53,6 +53,17 @@ export const POINT_BUY_COST = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 1
 export const abilityMod = (score) => Math.floor((score - 10) / 2);
 export const fmtMod = (m) => (m >= 0 ? `+${m}` : `${m}`);
 
+// SRD traits read like "_Name._ Body text…" or "**Name.** Body text…".
+// Split off the leading bold/italic title from the rest.
+export function parseTrait(text) {
+  const m = (text || "").match(/^\s*(?:_([^_]+?)_|\*\*([^*]+?)\*\*)\s*([\s\S]*)$/);
+  if (m) {
+    const title = (m[1] || m[2] || "").replace(/[.\s]+$/, "").trim();
+    return { title, body: (m[3] || "").trim() };
+  }
+  return { title: "", body: (text || "").trim() };
+}
+
 // ── Fetch + normalise ───────────────────────────────────────────────────────
 
 // Common 5e subraces beyond the SRD, encoded as game mechanics only (names,
@@ -227,7 +238,10 @@ export function buildCharacter({ name, avatar, race, subrace, cls, background, b
     spellAttackBonus: sc ? fmtMod(PROF + stats[sc]) : null,
     stats, statScores, saves, saveProf, skills,
     spellSlots: [], spells: [],
-    features: allTraits.map(tr => ({ name: tr.length > 48 ? tr.slice(0, 48) + "…" : tr, desc: tr })),
+    features: allTraits.map(tr => {
+      const { title } = parseTrait(tr);
+      return { name: title || (tr.length > 48 ? tr.slice(0, 48) + "…" : tr), desc: tr };
+    }),
     equipment: [],
     dmNotes: "",
     conditions: [],

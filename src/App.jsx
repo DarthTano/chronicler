@@ -29,8 +29,16 @@ const THEME_DOTS = {
   grimoire: "#c8a84b",
 };
 
+const THEME_KEY = "chronicler-theme";
+
 export default function App() {
-  const [themeName, setThemeName] = useState(DEFAULT_THEME);
+  const [themeName, setThemeName] = useState(() => {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved && THEMES[saved]) return saved;
+    } catch { /* storage unavailable */ }
+    return DEFAULT_THEME;
+  });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -44,6 +52,11 @@ export default function App() {
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // Remember the chosen theme across refreshes.
+  useEffect(() => {
+    try { localStorage.setItem(THEME_KEY, themeName); } catch { /* storage unavailable */ }
+  }, [themeName]);
 
   return (
     <ThemeContext.Provider value={t}>

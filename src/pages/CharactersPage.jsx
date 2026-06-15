@@ -6,6 +6,22 @@ import { supabase } from "../lib/supabase.js";
 import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
+import { parseTrait } from "../lib/srd.js";
+
+// Render inline Markdown (**bold**, *italic*, _italic_) as elements, dropping the markers.
+function renderInline(text) {
+  const nodes = [];
+  const regex = /(\*\*([^*]+)\*\*|\*([^*]+)\*|_([^_]+)_)/g;
+  let last = 0, m, key = 0;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m[2]) nodes.push(<strong key={key++}>{m[2]}</strong>);
+    else nodes.push(<em key={key++}>{m[3] || m[4]}</em>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
 
 function HPBar({ hp, t }) {
   const pct = Math.max(0, Math.min(100, (hp.current / hp.max) * 100));
@@ -52,6 +68,10 @@ export default function CharactersPage() {
   const [condOpen, setCondOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [hpAmount, setHpAmount] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteInput, setDeleteInput] = useState("");
+  const [saveError, setSaveError] = useState(null);
 
   const char = characters.find(c => c.id === selectedId);
   const isDemo = !configured || !user;
@@ -89,14 +109,62 @@ export default function CharactersPage() {
     return () => { cancelled = true; };
   }, [user, configured]);
 
+  // Persist a character's full sheet immediately so changes survive a refresh.
+  async function persist(updated) {
+    if (isDemo) return; // sample party is in-session only
+    const { id, ...data } = updated;
+    const { error } = await supabase.from("characters").update({ data }).eq("id", id);
+    setSaveError(error ? error.message : null);
+  }
+
+  // Mutate the selected character locally and save it.
+  function updateChar(mutate) {
+    const next = characters.map(ch => (ch.id === selectedId ? mutate(ch) : ch));
+    setCharacters(next);
+    const updated = next.find(ch => ch.id === selectedId);
+    if (updated) persist(updated);
+  }
+
   function addCondition(c) {
-    setCharacters(prev => prev.map(ch => ch.id === selectedId && !ch.conditions.includes(c) ? { ...ch, conditions: [...ch.conditions, c] } : ch));
+    if (!char.conditions.includes(c)) updateChar(ch => ({ ...ch, conditions: [...ch.conditions, c] }));
     setCondOpen(false);
   }
   function removeCondition(c) {
-    setCharacters(prev => prev.map(ch => ch.id === selectedId ? { ...ch, conditions: ch.conditions.filter(x => x !== c) } : ch));
+    updateChar(ch => ({ ...ch, conditions: ch.conditions.filter(x => x !== c) }));
   }
-  function pickChar(id) { setSelectedId(id); if (isMobile) setSidebarOpen(false); }
+
+  function applyDamage(n) {
+    updateChar(ch => {
+      const absorbed = Math.min(ch.hp.temp || 0, n);
+      const temp = (ch.hp.temp || 0) - absorbed;
+      const current = Math.max(0, ch.hp.current - (n - absorbed));
+      return { ...ch, hp: { ...ch.hp, current, temp } };
+    });
+  }
+  function applyHeal(n) {
+    updateChar(ch => ({ ...ch, hp: { ...ch.hp, current: Math.min(ch.hp.max, ch.hp.current + n) } }));
+  }
+  function setTempHp(n) {
+    updateChar(ch => ({ ...ch, hp: { ...ch.hp, temp: Math.max(0, n) } }));
+  }
+
+  async function deleteChar() {
+    if (isDemo || !char || deleteInput.trim() !== char.name) return;
+    const id = char.id;
+    const remaining = characters.filter(c => c.id !== id);
+    setCharacters(remaining);
+    setSelectedId(remaining[0]?.id ?? null);
+    setConfirmingDelete(false);
+    setDeleteInput("");
+    await supabase.from("characters").delete().eq("id", id);
+  }
+
+  function pickChar(id) {
+    setSelectedId(id);
+    setConfirmingDelete(false);
+    setDeleteInput("");
+    if (isMobile) setSidebarOpen(false);
+  }
 
   const tabs = ["stats", "spells", "features", "gear", ...(char?.bio ? ["bio"] : [])];
   const card = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: t.radius };
@@ -203,6 +271,11 @@ export default function CharactersPage() {
               </div>
             </div>
           </div>
+
+          {!isDemo && (
+            <button onClick={() => { setConfirmingDelete(true); setDeleteInput(""); }} title="Delete character"
+              style={{ flexShrink: 0, background: t.panelAlt, color: t.textDim, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, cursor: "pointer" }}>🗑</button>
+          )}
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
@@ -214,7 +287,23 @@ export default function CharactersPage() {
           ))}
         </div>
 
-        <div style={{ ...card, padding: "16px 18px", marginBottom: 16 }}><HPBar hp={char.hp} t={t} /></div>
+        <div style={{ ...card, padding: "16px 18px", marginBottom: 16 }}>
+          <HPBar hp={char.hp} t={t} />
+          <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <input type="number" min="0" value={hpAmount} onChange={e => setHpAmount(e.target.value)} placeholder="0"
+              style={{ width: 64, padding: "7px 9px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, fontSize: 14, outline: "none", textAlign: "center", boxSizing: "border-box" }} />
+            <button onClick={() => { const n = parseInt(hpAmount) || 0; if (n > 0) { applyDamage(n); setHpAmount(""); } }}
+              style={{ background: `${t.bad}1a`, color: t.bad, border: `1px solid ${t.bad}55`, borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>− Damage</button>
+            <button onClick={() => { const n = parseInt(hpAmount) || 0; if (n > 0) { applyHeal(n); setHpAmount(""); } }}
+              style={{ background: `${t.good}1a`, color: t.good, border: `1px solid ${t.good}55`, borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Heal</button>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: t.textDim, fontWeight: 600 }}>Temp HP</span>
+              <input type="number" min="0" value={char.hp.temp || ""} onChange={e => setTempHp(parseInt(e.target.value) || 0)} placeholder="0"
+                style={{ width: 56, padding: "7px 9px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, fontSize: 14, outline: "none", textAlign: "center", boxSizing: "border-box" }} />
+            </div>
+          </div>
+          {saveError && <div style={{ marginTop: 10, fontSize: 12, color: t.bad }}>Couldn't save: {saveError}</div>}
+        </div>
 
         <div style={{ ...card, marginBottom: 16, overflow: "hidden" }}>
           <button onClick={() => setShowDM(!showDM)} style={{ width: "100%", background: showDM ? t.accentSoft : "transparent", border: "none", cursor: "pointer", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -306,12 +395,15 @@ export default function CharactersPage() {
 
         {activeTab === "features" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {char.features.map(f => (
-              <div key={f.name} style={{ ...card, padding: "14px 16px" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: t.accent, marginBottom: 5 }}>{f.name}</div>
-                <div style={{ fontSize: 14, color: t.textMid, lineHeight: 1.55 }}>{f.desc}</div>
-              </div>
-            ))}
+            {char.features.map((f, i) => {
+              const { title, body } = parseTrait(f.desc || f.name);
+              return (
+                <div key={i} style={{ ...card, padding: "14px 16px" }}>
+                  {title && <div style={{ fontSize: 14, fontWeight: 700, color: t.accent, marginBottom: 5 }}>{title}</div>}
+                  <div style={{ fontSize: 14, color: t.textMid, lineHeight: 1.55 }}>{renderInline(body)}</div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -353,6 +445,29 @@ export default function CharactersPage() {
           </div>
         )}
       </main>
+
+      {/* Type-the-name delete confirmation */}
+      {confirmingDelete && !isDemo && char && (
+        <div onClick={() => { setConfirmingDelete(false); setDeleteInput(""); }}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 400, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, padding: 26, boxShadow: "0 16px 48px rgba(0,0,0,0.3)" }}>
+            <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700 }}>Delete {char.name}?</h2>
+            <p style={{ color: t.textMid, fontSize: 14, marginBottom: 16, lineHeight: 1.5 }}>
+              This permanently deletes the character — it can't be undone. Type <strong style={{ color: t.text }}>{char.name}</strong> to confirm.
+            </p>
+            <input autoFocus value={deleteInput} onChange={e => setDeleteInput(e.target.value)} placeholder={char.name}
+              onKeyDown={e => { if (e.key === "Enter" && deleteInput.trim() === char.name) deleteChar(); }}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, fontSize: 14, outline: "none", boxSizing: "border-box", marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => { setConfirmingDelete(false); setDeleteInput(""); }}
+                style={{ background: t.panelAlt, color: t.textMid, border: `1px solid ${t.border}`, borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+              <button onClick={deleteChar} disabled={deleteInput.trim() !== char.name}
+                style={{ background: deleteInput.trim() === char.name ? t.bad : t.panelAlt, color: deleteInput.trim() === char.name ? "#fff" : t.textDim, border: "none", borderRadius: 9, padding: "10px 18px", fontSize: 14, fontWeight: 700, cursor: deleteInput.trim() === char.name ? "pointer" : "default" }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
