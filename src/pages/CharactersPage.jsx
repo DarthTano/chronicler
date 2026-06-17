@@ -7,6 +7,13 @@ import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
 import { parseTrait, slotsForCharacter, maxSpellLevel, spellCapacity, fetchEquipment } from "../lib/srd.js";
+import { useDice } from "../DiceContext.jsx";
+
+// Pull the first dice expression (e.g. "1d10", "8d6") out of spell description prose.
+function parseDamageDice(desc) {
+  const m = (desc || "").match(/(\d+)d(\d+)/);
+  return m ? `${m[1]}d${m[2]}` : null;
+}
 
 // Render inline Markdown (**bold**, *italic*, _italic_) as elements, dropping the markers.
 function renderInline(text) {
@@ -48,6 +55,7 @@ function normItem(it) {
 
 // Full item details (weapon damage / armor AC) fetched from the SRD on demand.
 function ItemInfoModal({ item, onClose, t }) {
+  const { roll } = useDice();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(item.type === "Weapon" || item.type === "Armor");
   useEffect(() => {
@@ -81,6 +89,12 @@ function ItemInfoModal({ item, onClose, t }) {
               {row("Category", data.category)}
               {row("Weight", data.weight)}
               {row("Cost", data.cost)}
+              {data.damage_dice && (
+                <button onClick={() => roll(data.damage_dice, { label: `${item.name} damage` })}
+                  style={{ marginTop: 12, background: t.accent, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  🎲 Roll damage ({data.damage_dice})
+                </button>
+              )}
             </>
           ) : (
             <>
@@ -260,6 +274,7 @@ function SpellInfoModal({ spell, onClose, t }) {
 // Spells tab: slots auto-derived from class + level (track usage), and a
 // class/level-limited spell picker.
 function SpellsTab({ char, updateChar, t, isMobile }) {
+  const { roll } = useDice();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [infoSpell, setInfoSpell] = useState(null);
   const [castMsg, setCastMsg] = useState(null);
@@ -269,6 +284,22 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
     setCastMsg(msg);
     clearTimeout(castTimer.current);
     castTimer.current = setTimeout(() => setCastMsg(null), 1800);
+  }
+
+  // Fetch the spell's description and roll its damage dice on the 3D table.
+  async function rollSpellDamage(sp) {
+    try {
+      let desc = sp.desc;
+      if (!desc) {
+        const url = sp.slug
+          ? `https://api.open5e.com/v1/spells/${sp.slug}/`
+          : `https://api.open5e.com/v1/spells/?search=${encodeURIComponent(sp.name)}&limit=5`;
+        const data = await fetch(url).then(r => r.json());
+        desc = sp.slug ? data.desc : ((data.results || []).find(x => x.name === sp.name) || {}).desc;
+      }
+      const dice = parseDamageDice(desc);
+      if (dice) roll(dice, { label: sp.name });
+    } catch { /* no damage to roll */ }
   }
   const known = char.spells || [];
   const slots = slotsForCharacter(char.class, char.level);
@@ -299,7 +330,7 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
     return slot.total - Math.min(usedMap[level] || 0, slot.total);
   }
   function cast(sp) {
-    // Leveled spells spend a slot; cantrips are at-will. (Damage rolls — later.)
+    // Leveled spells spend a slot; cantrips are at-will.
     if (sp.level >= 1) {
       if (slotsLeft(sp.level) <= 0) return;
       updateChar(ch => {
@@ -309,6 +340,7 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
       });
     }
     flash(`✨ Cast ${sp.name}`);
+    rollSpellDamage(sp); // rolls 3D damage dice if the spell deals any
   }
 
   const spellCard = (sp) => {
