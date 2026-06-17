@@ -1,65 +1,53 @@
 # Resume notes — Chronicler
 
-_Last updated: 2026-06-13 (end of session)_
+_Last updated: 2026-06-17 (paused, back after work)_
 
 ## Where things stand
 
-**Phase 1 — Foundation is essentially complete.** Live at
+**Phase 2 — Player Tools** is well underway. Everything below is **live** at
 **https://chronicler-taupe.vercel.app** (auto-deploys from `master`).
-Currently **gathering feedback from friends** before starting Phase 2.
 
-| Feature | Status |
-| --- | --- |
-| Theme switcher (5 themes, live, mobile-friendly) | ✅ Done |
-| Characters — sheet viewer (loads real saved characters) | ✅ Done |
-| Compendium — SRD spells/monsters/items, full stat blocks | ✅ Done |
-| Dice — 3D physics roller (sounds, crit cheer/scream, fade-out) | ✅ Done |
-| Accounts & Auth + profile onboarding (Supabase) | ✅ Done |
-| Character builder (SRD, subraces, assignable ASI, roll-for-stats, roleplay) | ✅ Done |
+Done this stretch:
+- Multi-character management (delete with type-the-name confirm, living HP/temp/conditions, all persisted)
+- Trait Markdown rendering, theme persists across refreshes (localStorage)
+- Inventory & spell tracking → reworked into:
+  - **Spells tab**: cantrip/spell sections, per-class known limits, info popups, Cast (spends a slot; cantrips at-will), spell damage rolls on the 3D dice (+ casting modifier)
+  - **Equipped tab** + **Backpack tab** (split from the old Gear tab), quantities, item detail popups, equip toggle, weapon Roll-damage with STR/DEX mod
+- App-level 3D dice (`src/DiceContext.jsx`) any screen can trigger
+- Dice page: phone-friendly add/remove (corner − button), single-die d100 via `d%` notation
+- Sounds: nat-20 crowd cheer, nat-1 crowd boo (see public/sounds/CREDITS.txt)
 
-## Next: Phase 2 — Player Tools (per ROADMAP.html)
+## NEXT UP: Level-up flow
 
-Waiting on friend feedback first — fold that in before/alongside these:
-- Multi-character manager (edit/delete saved characters; currently create-only)
-- Level-up flow
-- Personal homebrew creator (ties into the homebrew toggle already in the builder)
-- Inventory & spell tracking (the builder leaves equipment/spells empty for now)
+Agreed scope for a focused v1 (was about to start):
+- A "Level Up" button on the character sheet that bumps `level`.
+- Auto-recompute level-driven numbers (tables already exist in src/lib/srd.js):
+  proficiency bonus, HP (roll vs average + CON), spell slots, spell capacity.
+- Prompt the per-level choices: HP roll vs average, ability score improvements at 4/8/12/16/19.
+- DEFER: subclass features and class-specific level features (Rage uses, Sneak
+  Attack dice, etc.) — big per-class data effort.
 
-Known small follow-ups noted during Phase 1:
-- Crit **visual** banner only shows for a lone d20 (sound fires on any d20 nat) — could broaden.
-- Half-Elf's two floating +1s are handled; other floating-ASI races could be added.
-- Spell/equipment steps in the builder were scoped out (Batch B never built) — natural Phase 2 work.
+## Then (still on the list, in order)
+
+1. Equipped armor → compute AC automatically (armor base_ac + Dex, etc.).
+2. Character creator: XP-per-kill vs Milestone selector.
+3. Character creator: count coin weight on/off selector.
+4. (Open question to revisit) Spell damage currently adds the casting modifier —
+   not 5e RAW for most spells. Confirm whether to keep.
 
 ## How to run locally
 
 ```
-# Node is at "C:\Program Files\nodejs" and is NOT on PATH — add it first in PowerShell:
-$env:PATH = "C:\Program Files\nodejs;" + $env:PATH
+$env:PATH = "C:\Program Files\nodejs;" + $env:PATH   # Node not on PATH by default
 npm install      # first time / after pulling
 npm run dev      # http://localhost:5173
 ```
-The dev server only lives while its process runs — it dies on window close / PC
-sleep, so it often needs a restart. Binds to the LAN (`host: true`) for phone
-testing at `http://<pc-ip>:5173` (was `192.168.50.98`).
+The dev server dies on window close / PC sleep — ping me to restart it. Binds to
+the LAN (host:true) for phone testing at http://<pc-ip>:5173.
 
-## Supabase
+## Supabase / workflow
 
-Project ref `knuvodaqhjrboyatickd`. Schema (profiles + characters, with RLS) is
-in `supabase/schema.sql`. Keys live in local `.env` (gitignored) and in Vercel's
-env vars (for production). Uses the new publishable key (`sb_publishable_…`).
-
-## Workflow
-
-- Work on **`dev`**; `master` is protected (production).
-- Promote: lift protection via GitHub API → `git push <remote> dev:master` →
-  re-apply protection. (Token can't open PRs.)
-- Every push to `dev` also gets its own Vercel preview URL for sharing WIP.
-
-## Audio assets
-
-Dice + crit sounds are in `public/sounds/` (CC0/CC-BY, see CREDITS.txt). The full
-source packs stay extracted under a gitignored `.tmp-dice/` for easy swapping.
-
-## Git anchor
-
-Tonight's stopping point is tagged **`phase1-complete-2026-06-13`**.
+- Project ref `knuvodaqhjrboyatickd`. Schema in supabase/schema.sql. Keys in local
+  .env (gitignored) and Vercel env vars.
+- Work on `dev`; promote by lifting master protection via API → `git push <remote>
+  dev:master` → re-apply protection. (Token can't open PRs.)
