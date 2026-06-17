@@ -42,8 +42,8 @@ function PickerModal({ title, subtitle, onClose, t, children }) {
 // Equipment is stored as { name, type, qty }; older characters stored bare
 // strings, so normalize both shapes on read.
 function normItem(it) {
-  if (typeof it === "string") return { name: it, type: "Gear", qty: 1 };
-  return { name: it.name, type: it.type || "Gear", qty: it.qty || 1 };
+  if (typeof it === "string") return { name: it, type: "Gear", qty: 1, equipped: false };
+  return { name: it.name, type: it.type || "Gear", qty: it.qty || 1, equipped: !!it.equipped };
 }
 
 // Full item details (weapon damage / armor AC) fetched from the SRD on demand.
@@ -262,6 +262,14 @@ function SpellInfoModal({ spell, onClose, t }) {
 function SpellsTab({ char, updateChar, t, isMobile }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [infoSpell, setInfoSpell] = useState(null);
+  const [castMsg, setCastMsg] = useState(null);
+  const castTimer = useRef(null);
+  useEffect(() => () => clearTimeout(castTimer.current), []);
+  function flash(msg) {
+    setCastMsg(msg);
+    clearTimeout(castTimer.current);
+    castTimer.current = setTimeout(() => setCastMsg(null), 1800);
+  }
   const known = char.spells || [];
   const slots = slotsForCharacter(char.class, char.level);
   const usedMap = char.slotsUsed || {};
@@ -291,16 +299,21 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
     return slot.total - Math.min(usedMap[level] || 0, slot.total);
   }
   function cast(sp) {
-    if (slotsLeft(sp.level) <= 0) return;
-    updateChar(ch => {
-      const slot = slots.find(s => s.level === sp.level);
-      const cur = (ch.slotsUsed || {})[sp.level] || 0;
-      return { ...ch, slotsUsed: { ...(ch.slotsUsed || {}), [sp.level]: Math.min(slot?.total ?? cur + 1, cur + 1) } };
-    });
+    // Leveled spells spend a slot; cantrips are at-will. (Damage rolls — later.)
+    if (sp.level >= 1) {
+      if (slotsLeft(sp.level) <= 0) return;
+      updateChar(ch => {
+        const slot = slots.find(s => s.level === sp.level);
+        const cur = (ch.slotsUsed || {})[sp.level] || 0;
+        return { ...ch, slotsUsed: { ...(ch.slotsUsed || {}), [sp.level]: Math.min(slot?.total ?? cur + 1, cur + 1) } };
+      });
+    }
+    flash(`✨ Cast ${sp.name}`);
   }
 
   const spellCard = (sp) => {
     const left = slotsLeft(sp.level);
+    const canCast = sp.level === 0 || left > 0;
     return (
       <div key={sp.name} style={{ ...card, padding: "10px 12px", borderLeft: `3px solid ${SCHOOL_COLORS[sp.school] || t.accent}`, display: "flex", alignItems: "center", gap: 8 }}>
         <button onClick={() => setInfoSpell(sp)} title="Spell details"
@@ -311,10 +324,9 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
             <span style={{ fontSize: 11, color: SCHOOL_COLORS[sp.school] || t.textDim, fontWeight: 600 }}>{sp.school}</span>
           </div>
         </button>
-        {sp.level >= 1 && (
-          <button onClick={() => cast(sp)} disabled={left <= 0} title={left <= 0 ? "No slots left" : "Cast — uses a slot"}
-            style={{ flexShrink: 0, background: left > 0 ? t.accentSoft : "transparent", color: left > 0 ? t.accent : t.textDim, border: `1px solid ${left > 0 ? t.accent : t.border}`, borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: left > 0 ? "pointer" : "default" }}>Cast</button>
-        )}
+        <button onClick={() => cast(sp)} disabled={!canCast}
+          title={sp.level === 0 ? "Cast cantrip (at will)" : left <= 0 ? "No slots left" : "Cast — uses a slot"}
+          style={{ flexShrink: 0, background: canCast ? t.accentSoft : "transparent", color: canCast ? t.accent : t.textDim, border: `1px solid ${canCast ? t.accent : t.border}`, borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: canCast ? "pointer" : "default" }}>Cast</button>
         <button onClick={() => removeSpell(sp.name)} title="Remove" style={{ flexShrink: 0, background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
       </div>
     );
@@ -333,6 +345,9 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {castMsg && (
+        <div style={{ background: t.accentSoft, color: t.accent, borderRadius: 8, padding: "8px 14px", fontSize: 14, fontWeight: 700, textAlign: "center" }}>{castMsg}</div>
+      )}
       {char.spellSaveDC != null && (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <div style={{ ...card, padding: 14, textAlign: "center", flex: "1 1 100px" }}>
@@ -539,6 +554,12 @@ export default function CharactersPage() {
   }
   function removeItemByKey(name, type) {
     updateChar(ch => ({ ...ch, equipment: (ch.equipment || []).map(normItem).filter(x => !(x.name === name && x.type === type)) }));
+  }
+  function toggleEquip(name, type) {
+    updateChar(ch => ({
+      ...ch,
+      equipment: (ch.equipment || []).map(normItem).map(x => (x.name === name && x.type === type ? { ...x, equipped: !x.equipped } : x)),
+    }));
   }
 
   async function deleteChar() {
@@ -764,6 +785,28 @@ export default function CharactersPage() {
         {activeTab === "gear" && (() => {
           const items = (char.equipment || []).map(normItem);
           const iconFor = (it) => it.type === "Weapon" ? "⚔️" : it.type === "Armor" ? "🛡️" : it.name.includes("Pack") ? "🎒" : it.name.includes("Rations") ? "🍖" : "✨";
+          const equipped = items.filter(it => it.equipped && (it.type === "Weapon" || it.type === "Armor"));
+          const qtyBtn = { width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 };
+          const itemCard = (it) => (
+            <div key={it.type + it.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderLeft: it.equipped ? `3px solid ${t.accent}` : `1px solid ${t.border}` }}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>{iconFor(it)}</span>
+              <button onClick={() => setInfoItem(it)} title="Item details"
+                style={{ flex: 1, minWidth: 80, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</button>
+              {(it.type === "Weapon" || it.type === "Armor") && (
+                <button onClick={() => toggleEquip(it.name, it.type)} title={it.equipped ? "Unequip" : "Equip"}
+                  style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "4px 9px", cursor: "pointer", border: `1px solid ${it.equipped ? t.accent : t.border}`, background: it.equipped ? t.accentSoft : "transparent", color: it.equipped ? t.accent : t.textMid }}>{it.equipped ? "Equipped" : "Equip"}</button>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                <button onClick={() => setItemQty(it.name, it.type, -1)} style={qtyBtn}>−</button>
+                <span style={{ fontSize: 13, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{it.qty}</span>
+                <button onClick={() => setItemQty(it.name, it.type, 1)} style={qtyBtn}>+</button>
+              </div>
+              <button onClick={() => removeItemByKey(it.name, it.type)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+            </div>
+          );
+          const grid = (list) => (
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>{list.map(itemCard)}</div>
+          );
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -772,30 +815,26 @@ export default function CharactersPage() {
               </div>
               {items.length === 0 ? (
                 <div style={{ ...card, padding: 32, textAlign: "center", color: t.textDim, fontSize: 14 }}>No gear yet — use “Add item” to pick from SRD weapons, armor, and gear.</div>
-              ) : [["Weapon", "Weapons"], ["Armor", "Armor"], ["Gear", "Gear"]].map(([type, label]) => {
-                const group = items.filter(it => it.type === type);
-                if (group.length === 0) return null;
-                return (
-                  <div key={type}>
-                    <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
-                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
-                      {group.map(it => (
-                        <div key={it.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ fontSize: 16, flexShrink: 0 }}>{iconFor(it)}</span>
-                          <button onClick={() => setInfoItem(it)} title="Item details"
-                            style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</button>
-                          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                            <button onClick={() => setItemQty(it.name, it.type, -1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>−</button>
-                            <span style={{ fontSize: 13, fontWeight: 700, minWidth: 18, textAlign: "center" }}>{it.qty}</span>
-                            <button onClick={() => setItemQty(it.name, it.type, 1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>+</button>
-                          </div>
-                          <button onClick={() => removeItemByKey(it.name, it.type)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
-                        </div>
-                      ))}
+              ) : (
+                <>
+                  {equipped.length > 0 && (
+                    <div>
+                      <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.accent, textTransform: "uppercase" }}>Equipped</h3>
+                      {grid(equipped)}
                     </div>
-                  </div>
-                );
-              })}
+                  )}
+                  {[["Weapon", "Weapons"], ["Armor", "Armor"], ["Gear", "Gear"]].map(([type, label]) => {
+                    const group = items.filter(it => it.type === type);
+                    if (group.length === 0) return null;
+                    return (
+                      <div key={type}>
+                        <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
+                        {grid(group)}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           );
         })()}
