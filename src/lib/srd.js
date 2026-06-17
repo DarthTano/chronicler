@@ -64,6 +64,82 @@ export function parseTrait(text) {
   return { title: "", body: (text || "").trim() };
 }
 
+// ── Spell slots (auto-derived from class + level) ────────────────────────────
+
+const FULL_CASTERS = ["Bard", "Cleric", "Druid", "Sorcerer", "Wizard"];
+const HALF_CASTERS = ["Paladin", "Ranger"];
+
+const FULL_SLOTS = {
+  1: [2], 2: [3], 3: [4, 2], 4: [4, 3], 5: [4, 3, 2], 6: [4, 3, 3], 7: [4, 3, 3, 1],
+  8: [4, 3, 3, 2], 9: [4, 3, 3, 3, 1], 10: [4, 3, 3, 3, 2], 11: [4, 3, 3, 3, 2, 1],
+  12: [4, 3, 3, 3, 2, 1], 13: [4, 3, 3, 3, 2, 1, 1], 14: [4, 3, 3, 3, 2, 1, 1],
+  15: [4, 3, 3, 3, 2, 1, 1, 1], 16: [4, 3, 3, 3, 2, 1, 1, 1], 17: [4, 3, 3, 3, 2, 1, 1, 1, 1],
+  18: [4, 3, 3, 3, 3, 1, 1, 1, 1], 19: [4, 3, 3, 3, 3, 2, 1, 1, 1], 20: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+};
+const HALF_SLOTS = {
+  1: [], 2: [2], 3: [3], 4: [3], 5: [4, 2], 6: [4, 2], 7: [4, 3], 8: [4, 3], 9: [4, 3, 2],
+  10: [4, 3, 2], 11: [4, 3, 3], 12: [4, 3, 3], 13: [4, 3, 3, 1], 14: [4, 3, 3, 1],
+  15: [4, 3, 3, 2], 16: [4, 3, 3, 2], 17: [4, 3, 3, 3, 1], 18: [4, 3, 3, 3, 1], 19: [4, 3, 3, 3, 2], 20: [4, 3, 3, 3, 2],
+};
+const WARLOCK_SLOTS = { // [slotCount, slotLevel]
+  1: [1, 1], 2: [2, 1], 3: [2, 2], 4: [2, 2], 5: [2, 3], 6: [2, 3], 7: [2, 4], 8: [2, 4], 9: [2, 5], 10: [2, 5],
+  11: [3, 5], 12: [3, 5], 13: [3, 5], 14: [3, 5], 15: [3, 5], 16: [3, 5], 17: [4, 5], 18: [4, 5], 19: [4, 5], 20: [4, 5],
+};
+
+// Standard 5e spell slots for a single-class caster → [{ level, total }].
+export function slotsForCharacter(cls, level = 1) {
+  const lvl = Math.max(1, Math.min(20, level || 1));
+  if (cls === "Warlock") {
+    const [count, slotLvl] = WARLOCK_SLOTS[lvl] || [];
+    return count ? [{ level: slotLvl, total: count }] : [];
+  }
+  if (FULL_CASTERS.includes(cls)) return (FULL_SLOTS[lvl] || []).map((total, i) => ({ level: i + 1, total }));
+  if (HALF_CASTERS.includes(cls)) return (HALF_SLOTS[lvl] || []).map((total, i) => ({ level: i + 1, total }));
+  return [];
+}
+
+// Highest spell level this character can cast (0 = none beyond cantrips).
+export function maxSpellLevel(cls, level = 1) {
+  const slots = slotsForCharacter(cls, level);
+  return slots.length ? Math.max(...slots.map(s => s.level)) : 0;
+}
+
+// How many cantrips / leveled spells a class can have at a given level.
+// (Level-1 values for now; prepared casters scale with their ability modifier.)
+const CANTRIPS_KNOWN = { Bard: 2, Cleric: 3, Druid: 2, Sorcerer: 4, Warlock: 2, Wizard: 3 };
+const SPELLS_KNOWN = { Bard: 4, Sorcerer: 2, Warlock: 2, Wizard: 6, Ranger: 0 }; // "known" casters
+const PREPARED_ABILITY = { Cleric: "WIS", Druid: "WIS", Paladin: "CHA" }; // prepared = mod + level
+
+export function spellCapacity(cls, level = 1, statMods = {}) {
+  const cantrips = CANTRIPS_KNOWN[cls] || 0;
+  let spells = 0;
+  if (SPELLS_KNOWN[cls] != null) spells = SPELLS_KNOWN[cls];
+  else if (PREPARED_ABILITY[cls]) spells = Math.max(1, (statMods[PREPARED_ABILITY[cls]] || 0) + (level || 1));
+  return { cantrips, spells };
+}
+
+// ── Equipment ────────────────────────────────────────────────────────────────
+
+// Common SRD adventuring gear (no dedicated API endpoint exists for it).
+export const GEAR = [
+  "Backpack", "Bedroll", "Blanket", "Caltrops", "Candle", "Chain (10 ft)", "Chalk", "Climber's Kit",
+  "Component Pouch", "Crowbar", "Grappling Hook", "Hammer", "Healer's Kit", "Holy Symbol", "Hooded Lantern",
+  "Hunting Trap", "Ink and Quill", "Iron Pot", "Lantern (Bullseye)", "Manacles", "Mess Kit", "Mirror (Steel)",
+  "Oil (Flask)", "Parchment (sheet)", "Piton", "Pole (10 ft)", "Rations (1 day)", "Rope, Hempen (50 ft)",
+  "Rope, Silk (50 ft)", "Sealing Wax", "Shovel", "Signal Whistle", "Soap", "Spellbook", "Tent (Two-Person)",
+  "Thieves' Tools", "Tinderbox", "Torch", "Vial", "Waterskin", "Whetstone",
+];
+
+// Fetch the SRD weapons + armor, combined with curated gear, for the item picker.
+export async function fetchEquipment() {
+  const grab = (path) => fetch(`${API}/${path}/?${SRD}&limit=200`).then(r => r.json()).catch(() => ({ results: [] }));
+  const [w, a] = await Promise.all([grab("weapons"), grab("armor")]);
+  const weapons = (w.results || []).map(x => ({ name: x.name, type: "Weapon" }));
+  const armor = (a.results || []).map(x => ({ name: x.name, type: "Armor" }));
+  const gear = GEAR.map(name => ({ name, type: "Gear" }));
+  return [...weapons, ...armor, ...gear].sort((p, q) => p.name.localeCompare(q.name));
+}
+
 // ── Fetch + normalise ───────────────────────────────────────────────────────
 
 // Common 5e subraces beyond the SRD, encoded as game mechanics only (names,

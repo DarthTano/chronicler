@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useTheme } from "../ThemeContext.js";
 import { useAuth } from "../AuthContext.jsx";
@@ -6,7 +6,7 @@ import { supabase } from "../lib/supabase.js";
 import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
-import { parseTrait } from "../lib/srd.js";
+import { parseTrait, slotsForCharacter, maxSpellLevel, spellCapacity, fetchEquipment } from "../lib/srd.js";
 
 // Render inline Markdown (**bold**, *italic*, _italic_) as elements, dropping the markers.
 function renderInline(text) {
@@ -21,6 +21,310 @@ function renderInline(text) {
   }
   if (last < text.length) nodes.push(text.slice(last));
   return nodes;
+}
+
+// Modal shell for the item / spell pickers.
+function PickerModal({ title, subtitle, onClose, t, children }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, padding: 20, boxShadow: "0 16px 48px rgba(0,0,0,0.3)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.textDim, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+        {subtitle && <div style={{ fontSize: 12, color: t.textDim, marginTop: 2, marginBottom: 10 }}>{subtitle}</div>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Pick SRD weapons / armor / gear to add to inventory. Stays open for multiple adds.
+function ItemPicker({ onAdd, onClose, t }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    fetchEquipment().then(list => { if (!cancelled) { setItems(list); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, []);
+  const ql = q.toLowerCase().trim();
+  const filtered = ql ? items.filter(it => it.name.toLowerCase().includes(ql)) : items;
+  return (
+    <PickerModal title="Add item" subtitle="SRD weapons, armor & gear — click to add, close when done" onClose={onClose} t={t}>
+      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search items…"
+        style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+      <div style={{ overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 2 }}>
+        {loading ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Loading…</div>
+          : filtered.length === 0 ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>No matches.</div>
+          : filtered.map((it, i) => (
+            <button key={i} onClick={() => onAdd(it.name)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "transparent", border: "none", borderRadius: 7, padding: "8px 10px", cursor: "pointer", textAlign: "left" }}>
+              <span style={{ fontSize: 13, color: t.text }}>{it.name}</span>
+              <span style={{ fontSize: 11, color: t.textDim }}>{it.type}</span>
+            </button>
+          ))}
+      </div>
+    </PickerModal>
+  );
+}
+
+// Pick SRD spells from the character's class list, limited to castable levels
+// and to how many cantrips / spells the class can know.
+function SpellPicker({ cls, maxLvl, known, caps, onAdd, onClose, t }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const debounce = useRef(null);
+  const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+  const knownNames = known.map(k => k.name);
+  const cantripCount = known.filter(k => k.level === 0).length;
+  const leveledCount = known.length - cantripCount;
+
+  useEffect(() => {
+    clearTimeout(debounce.current);
+    setSearching(true);
+    debounce.current = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ document__slug__in: "wotc-srd", ordering: "level_int", limit: "60" });
+        if (q.trim()) params.set("search", q.trim());
+        if (cls) params.set("dnd_class__icontains", cls);
+        const res = await fetch(`https://api.open5e.com/v1/spells/?${params}`);
+        const data = await res.json();
+        setResults((data.results || []).filter(sp => sp.level_int === 0 || sp.level_int <= maxLvl));
+      } catch { setResults([]); }
+      setSearching(false);
+    }, 300);
+    return () => clearTimeout(debounce.current);
+  }, [q, cls, maxLvl]);
+
+  return (
+    <PickerModal title="Add spell"
+      subtitle={`${cls || "SRD"} · Cantrips ${cantripCount}/${caps.cantrips} · Spells ${leveledCount}/${caps.spells}`}
+      onClose={onClose} t={t}>
+      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search spells…"
+        style={{ width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+      <div style={{ overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 2 }}>
+        {searching && results.length === 0 ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Searching…</div>
+          : results.length === 0 ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>No spells found.</div>
+          : results.map(sp => {
+            const already = knownNames.includes(sp.name);
+            const isCantrip = sp.level_int === 0;
+            const atCap = isCantrip ? cantripCount >= caps.cantrips : leveledCount >= caps.spells;
+            const disabled = already || atCap;
+            return (
+              <button key={sp.slug || sp.name} disabled={disabled}
+                onClick={() => !disabled && onAdd({ name: sp.name, level: sp.level_int, school: cap(sp.school), slug: sp.slug })}
+                style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 7, padding: "8px 10px", cursor: disabled ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: disabled ? 0.5 : 1 }}>
+                <span style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: SCHOOL_COLORS[cap(sp.school)] || t.accent }} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{sp.name}</span>
+                  <span style={{ fontSize: 11, color: t.textDim, marginLeft: 6 }}>{isCantrip ? "Cantrip" : `Lvl ${sp.level_int}`} · {cap(sp.school)}</span>
+                </span>
+                {already ? <span style={{ fontSize: 11, color: t.textDim }}>added</span>
+                  : atCap ? <span style={{ fontSize: 11, color: t.textDim }}>limit</span>
+                  : <span style={{ fontSize: 16, color: t.accent }}>+</span>}
+              </button>
+            );
+          })}
+      </div>
+    </PickerModal>
+  );
+}
+
+// Full spell details, fetched from the SRD on demand (by slug, or by name).
+function SpellInfoModal({ spell, onClose, t }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        let sp = null;
+        if (spell.slug) {
+          const r = await fetch(`https://api.open5e.com/v1/spells/${spell.slug}/`);
+          if (r.ok) sp = await r.json();
+        }
+        if (!sp) {
+          const r = await fetch(`https://api.open5e.com/v1/spells/?search=${encodeURIComponent(spell.name)}&limit=5`);
+          const d = await r.json();
+          sp = (d.results || []).find(x => x.name === spell.name) || (d.results || [])[0] || null;
+        }
+        if (!cancelled) { setData(sp); setLoading(false); }
+      } catch { if (!cancelled) setLoading(false); }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [spell]);
+
+  const row = (label, value) => value ? (
+    <div style={{ display: "flex", gap: 8, marginBottom: 5, fontSize: 13 }}>
+      <span style={{ fontWeight: 700, color: t.accent, whiteSpace: "nowrap" }}>{label}</span>
+      <span style={{ color: t.textMid }}>{value}</span>
+    </div>
+  ) : null;
+
+  const lvl = spell.level === 0 ? "Cantrip" : `Level ${spell.level}`;
+  return (
+    <PickerModal title={spell.name} subtitle={`${lvl} · ${spell.school || ""}`} onClose={onClose} t={t}>
+      <div style={{ overflowY: "auto" }}>
+        {loading ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Loading…</div>
+          : !data ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Couldn't load spell details.</div>
+          : (
+            <>
+              {row("Casting Time", data.casting_time)}
+              {row("Range", data.range)}
+              {row("Components", [data.components, data.material].filter(Boolean).join(" "))}
+              {row("Duration", data.duration)}
+              <div style={{ borderTop: `1px solid ${t.border}`, margin: "12px 0" }} />
+              <div style={{ fontSize: 14, color: t.textMid, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{data.desc}</div>
+              {data.higher_level && (
+                <>
+                  <div style={{ marginTop: 14, marginBottom: 4, fontWeight: 700, color: t.accent, fontSize: 13 }}>At Higher Levels.</div>
+                  <div style={{ fontSize: 14, color: t.textMid, lineHeight: 1.7 }}>{data.higher_level}</div>
+                </>
+              )}
+            </>
+          )}
+      </div>
+    </PickerModal>
+  );
+}
+
+// Spells tab: slots auto-derived from class + level (track usage), and a
+// class/level-limited spell picker.
+function SpellsTab({ char, updateChar, t, isMobile }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [infoSpell, setInfoSpell] = useState(null);
+  const known = char.spells || [];
+  const slots = slotsForCharacter(char.class, char.level);
+  const usedMap = char.slotsUsed || {};
+  const maxLvl = maxSpellLevel(char.class, char.level);
+  const caps = spellCapacity(char.class, char.level, char.stats || {});
+  const card = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: t.radius };
+  const sortedKnown = [...known].sort((a, b) => (a.level - b.level) || a.name.localeCompare(b.name));
+  const cantrips = sortedKnown.filter(s => s.level === 0);
+  const leveled = sortedKnown.filter(s => s.level >= 1);
+
+  function addSpell(sp) {
+    if (!known.some(k => k.name === sp.name)) updateChar(ch => ({ ...ch, spells: [...(ch.spells || []), sp] }));
+  }
+  function removeSpell(name) {
+    updateChar(ch => ({ ...ch, spells: (ch.spells || []).filter(s => s.name !== name) }));
+  }
+  function toggleSlot(level, idx) {
+    updateChar(ch => {
+      const cur = (ch.slotsUsed || {})[level] || 0;
+      const used = idx < cur ? idx : idx + 1;
+      return { ...ch, slotsUsed: { ...(ch.slotsUsed || {}), [level]: used } };
+    });
+  }
+  function slotsLeft(level) {
+    const slot = slots.find(s => s.level === level);
+    if (!slot) return 0;
+    return slot.total - Math.min(usedMap[level] || 0, slot.total);
+  }
+  function cast(sp) {
+    if (slotsLeft(sp.level) <= 0) return;
+    updateChar(ch => {
+      const slot = slots.find(s => s.level === sp.level);
+      const cur = (ch.slotsUsed || {})[sp.level] || 0;
+      return { ...ch, slotsUsed: { ...(ch.slotsUsed || {}), [sp.level]: Math.min(slot?.total ?? cur + 1, cur + 1) } };
+    });
+  }
+
+  const spellCard = (sp) => {
+    const left = slotsLeft(sp.level);
+    return (
+      <div key={sp.name} style={{ ...card, padding: "10px 12px", borderLeft: `3px solid ${SCHOOL_COLORS[sp.school] || t.accent}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <button onClick={() => setInfoSpell(sp)} title="Spell details"
+          style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: t.text }}>{sp.name}</div>
+          <div style={{ display: "flex", gap: 8, marginTop: 3 }}>
+            <span style={{ fontSize: 11, color: t.textDim }}>{sp.level === 0 ? "Cantrip" : `Level ${sp.level}`}</span>
+            <span style={{ fontSize: 11, color: SCHOOL_COLORS[sp.school] || t.textDim, fontWeight: 600 }}>{sp.school}</span>
+          </div>
+        </button>
+        {sp.level >= 1 && (
+          <button onClick={() => cast(sp)} disabled={left <= 0} title={left <= 0 ? "No slots left" : "Cast — uses a slot"}
+            style={{ flexShrink: 0, background: left > 0 ? t.accentSoft : "transparent", color: left > 0 ? t.accent : t.textDim, border: `1px solid ${left > 0 ? t.accent : t.border}`, borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: left > 0 ? "pointer" : "default" }}>Cast</button>
+        )}
+        <button onClick={() => removeSpell(sp.name)} title="Remove" style={{ flexShrink: 0, background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+      </div>
+    );
+  };
+
+  const sectionHead = (label, count, cap) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+      <h3 style={{ margin: 0, fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
+      <span style={{ fontSize: 11, color: count >= cap ? t.warn : t.textDim, fontWeight: 600 }}>{count}/{cap}</span>
+    </div>
+  );
+
+  const grid = (list) => (
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>{list.map(spellCard)}</div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {char.spellSaveDC != null && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ ...card, padding: 14, textAlign: "center", flex: "1 1 100px" }}>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{char.spellSaveDC}</div>
+            <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", fontWeight: 600 }}>Save DC</div>
+          </div>
+          <div style={{ ...card, padding: 14, textAlign: "center", flex: "1 1 100px" }}>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{char.spellAttackBonus}</div>
+            <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", fontWeight: 600 }}>Atk Bonus</div>
+          </div>
+        </div>
+      )}
+
+      {slots.length > 0 && (
+        <div style={{ ...card, padding: 16 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Spell Slots</h3>
+          {slots.map(s => {
+            const used = Math.min(usedMap[s.level] || 0, s.total);
+            return (
+              <div key={s.level} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: t.textDim, width: 44, fontWeight: 600 }}>Lvl {s.level}</span>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {Array.from({ length: s.total }).map((_, i) => (
+                    <button key={i} onClick={() => toggleSlot(s.level, i)} title={i < used ? "Used — click to restore" : "Available — click to use"}
+                      style={{ width: 16, height: 16, borderRadius: "50%", border: `1.5px solid ${t.accent}`, background: i < used ? "transparent" : t.accent, cursor: "pointer", padding: 0 }} />
+                  ))}
+                </div>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: t.textDim }}>{s.total - used}/{s.total} left</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button onClick={() => setPickerOpen(true)} style={{ background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add spell</button>
+      </div>
+
+      {caps.cantrips > 0 && (
+        <div>
+          {sectionHead("Cantrips", cantrips.length, caps.cantrips)}
+          {cantrips.length === 0 ? <div style={{ fontSize: 13, color: t.textDim }}>None yet — add up to {caps.cantrips}.</div> : grid(cantrips)}
+        </div>
+      )}
+      <div>
+        {sectionHead("Spells", leveled.length, caps.spells)}
+        {leveled.length === 0 ? <div style={{ fontSize: 13, color: t.textDim }}>None yet{caps.spells > 0 ? ` — add up to ${caps.spells}.` : "."}</div> : grid(leveled)}
+      </div>
+
+      {pickerOpen && (
+        <SpellPicker cls={char.class} maxLvl={maxLvl} known={known} caps={caps}
+          onAdd={addSpell} onClose={() => setPickerOpen(false)} t={t} />
+      )}
+      {infoSpell && <SpellInfoModal spell={infoSpell} onClose={() => setInfoSpell(null)} t={t} />}
+    </div>
+  );
 }
 
 function HPBar({ hp, t }) {
@@ -69,6 +373,7 @@ export default function CharactersPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [hpAmount, setHpAmount] = useState("");
+  const [itemPickerOpen, setItemPickerOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
   const [saveError, setSaveError] = useState(null);
@@ -146,6 +451,13 @@ export default function CharactersPage() {
   }
   function setTempHp(n) {
     updateChar(ch => ({ ...ch, hp: { ...ch.hp, temp: Math.max(0, n) } }));
+  }
+
+  function addItemName(name) {
+    updateChar(ch => ({ ...ch, equipment: [...ch.equipment, name] }));
+  }
+  function removeItem(idx) {
+    updateChar(ch => ({ ...ch, equipment: ch.equipment.filter((_, i) => i !== idx) }));
   }
 
   async function deleteChar() {
@@ -351,46 +663,7 @@ export default function CharactersPage() {
         )}
 
         {activeTab === "spells" && (
-          char.spells.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ ...card, padding: 16, flex: "1 1 200px" }}>
-                  <h3 style={{ margin: "0 0 12px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Spell Slots</h3>
-                  {char.spellSlots.map(s => (
-                    <div key={s.level} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                      <span style={{ fontSize: 12, color: t.textDim, width: 14, fontWeight: 600 }}>{s.level}</span>
-                      <div style={{ display: "flex", gap: 5 }}>
-                        {Array.from({ length: s.total }).map((_, i) => (
-                          <div key={i} style={{ width: 13, height: 13, borderRadius: "50%", border: `1.5px solid ${t.accent}`, background: i < s.used ? "transparent" : t.accent }} />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ ...card, padding: 16, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", flex: "1 1 100px" }}>
-                  <div style={{ fontSize: 26, fontWeight: 700 }}>{char.spellSaveDC}</div>
-                  <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", fontWeight: 600 }}>Save DC</div>
-                </div>
-                <div style={{ ...card, padding: 16, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", flex: "1 1 100px" }}>
-                  <div style={{ fontSize: 26, fontWeight: 700 }}>{char.spellAttackBonus}</div>
-                  <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", fontWeight: 600 }}>Atk Bonus</div>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
-                {char.spells.map(sp => (
-                  <div key={sp.name} style={{ ...card, padding: "12px 14px", borderLeft: `3px solid ${SCHOOL_COLORS[sp.school]}` }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{sp.name}</div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 11, color: t.textDim }}>Level {sp.level}</span>
-                      <span style={{ fontSize: 11, color: SCHOOL_COLORS[sp.school], fontWeight: 600 }}>{sp.school}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div style={{ ...card, padding: 40, textAlign: "center", color: t.textDim }}>This character casts no spells.</div>
-          )
+          <SpellsTab char={char} updateChar={updateChar} t={t} isMobile={isMobile} />
         )}
 
         {activeTab === "features" && (
@@ -408,13 +681,24 @@ export default function CharactersPage() {
         )}
 
         {activeTab === "gear" && (
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
-            {char.equipment.map((item, i) => (
-              <div key={i} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 16 }}>{item.includes("gp") ? "🪙" : item.includes("Armor") ? "🛡️" : /Axe|Dagger|Staff/.test(item) ? "⚔️" : item.includes("Pack") ? "🎒" : "✨"}</span>
-                <span style={{ fontSize: 13, color: t.textMid }}>{item}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0, fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Inventory</h3>
+              <button onClick={() => setItemPickerOpen(true)} style={{ background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
+            </div>
+            {char.equipment.length === 0 ? (
+              <div style={{ ...card, padding: 32, textAlign: "center", color: t.textDim, fontSize: 14 }}>No gear yet — use “Add item” to pick from SRD weapons, armor, and gear.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+                {char.equipment.map((item, i) => (
+                  <div key={i} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 16 }}>{item.includes("gp") ? "🪙" : item.includes("Armor") ? "🛡️" : /Axe|Dagger|Staff|Sword|Bow/.test(item) ? "⚔️" : item.includes("Pack") ? "🎒" : "✨"}</span>
+                    <span style={{ fontSize: 13, color: t.textMid, flex: 1, minWidth: 0 }}>{item}</span>
+                    <button onClick={() => removeItem(i)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
 
@@ -445,6 +729,10 @@ export default function CharactersPage() {
           </div>
         )}
       </main>
+
+      {itemPickerOpen && (
+        <ItemPicker onAdd={addItemName} onClose={() => setItemPickerOpen(false)} t={t} />
+      )}
 
       {/* Type-the-name delete confirmation */}
       {confirmingDelete && !isDemo && char && (
