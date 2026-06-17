@@ -146,12 +146,18 @@ function SpellPicker({ cls, maxLvl, known, caps, onAdd, onClose, t }) {
     setSearching(true);
     debounce.current = setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ document__slug__in: "wotc-srd", ordering: "level_int", limit: "60" });
-        if (q.trim()) params.set("search", q.trim());
-        if (cls) params.set("dnd_class__icontains", cls);
-        const res = await fetch(`https://api.open5e.com/v1/spells/?${params}`);
-        const data = await res.json();
-        setResults((data.results || []).filter(sp => sp.level_int === 0 || sp.level_int <= maxLvl));
+        // Fetch each castable level explicitly (0 = cantrips). The API ignores
+        // ordering/lte filters, so this guarantees cantrips are included.
+        const levels = [0];
+        for (let l = 1; l <= maxLvl; l++) levels.push(l);
+        const reqs = levels.map(lvl => {
+          const params = new URLSearchParams({ document__slug__in: "wotc-srd", limit: "100", level_int: String(lvl) });
+          if (q.trim()) params.set("search", q.trim());
+          if (cls) params.set("dnd_class__icontains", cls);
+          return fetch(`https://api.open5e.com/v1/spells/?${params}`).then(r => r.json()).then(d => d.results || []).catch(() => []);
+        });
+        const all = (await Promise.all(reqs)).flat().sort((a, b) => (a.level_int - b.level_int) || a.name.localeCompare(b.name));
+        setResults(all);
       } catch { setResults([]); }
       setSearching(false);
     }, 300);
