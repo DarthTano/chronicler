@@ -19,7 +19,13 @@
       "Bash(node -e ' *)",
       "Bash(git check-ignore *)",
       "WebSearch",
-      "WebFetch(domain:opengameart.org)"
+      "WebFetch(domain:opengameart.org)",
+      "WebFetch(domain:mixkit.co)",
+      "Bash(curl -s -A \"Mozilla/5.0\" \"https://mixkit.co/free-sound-effects/boo/\")",
+      "Bash(curl -s -A \"Mozilla/5.0\" \"https://commons.wikimedia.org/w/api.php?action=query&format=json&list=search&srsearch=booing%20OR%20boo%20crowd&srnamespace=6&srlimit=12\")",
+      "Bash(curl -s -A \"Mozilla/5.0\" \"https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&titles=File:Soundgoats%20-%20Audience%20Booing.wav\")",
+      "Bash(curl -s -L -A \"ChroniclerDnD/1.0 \\(hobby D&D app; contact kalvin.a.taylor@gmail.com\\)\" \"https://upload.wikimedia.org/wikipedia/commons/e/e5/Soundgoats_-_Audience_Booing.wav\" -o public/sounds/crit-fail.wav)",
+      "Bash(xxd)"
     ]
   }
 }

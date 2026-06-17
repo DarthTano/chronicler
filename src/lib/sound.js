@@ -5,7 +5,7 @@
 
 const ROLL_FILES = ["/sounds/dice-roll-1.wav", "/sounds/dice-roll-2.wav", "/sounds/dice-roll-3.wav"];
 const CHEER_FILE = "/sounds/crit-success.mp3";
-const RAGE_FILE = "/sounds/crit-fail.ogg";
+const RAGE_FILE = "/sounds/crit-fail.wav";
 
 const cache = {};
 function el(src) {

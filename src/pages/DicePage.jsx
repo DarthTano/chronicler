@@ -219,6 +219,7 @@ export default function DicePage() {
       const count = pool[sides] || 0;
       if (!count) continue;
       if (sides === 20 && effMode !== "normal") notation.push("2d20");
+      else if (sides === 100) notation.push(`${count}d%`); // d% = a single d100, not a percentile pair
       else notation.push(`${count}d${sides}`);
     }
     pendingRef.current = { modifier, mode: effMode };
@@ -323,26 +324,31 @@ export default function DicePage() {
               const count = pool[sides] || 0;
               return (
                 <div key={sides} style={{ position: "relative" }}>
-                  <button onClick={() => addDie(sides)} onContextMenu={(e) => { e.preventDefault(); removeDie(sides); }} style={{
+                  <button onClick={() => addDie(sides)} aria-label={`Add a d${sides}`} style={{
                     width: "100%", cursor: "pointer", borderRadius: 12, padding: "14px 0",
                     background: count ? t.accentSoft : t.panelAlt,
                     border: `2px solid ${count ? DIE_COLORS[sides] : t.border}`,
                     color: t.text, fontSize: 18, fontWeight: 700,
-                  }}>
-                    d{sides}
-                    {count > 0 && (
-                      <span style={{
-                        position: "absolute", top: -8, right: -8, minWidth: 22, height: 22,
-                        borderRadius: 11, background: DIE_COLORS[sides], color: "#fff",
-                        fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px",
-                      }}>{count}</span>
-                    )}
-                  </button>
+                  }}>d{sides}</button>
+                  {count > 0 && (
+                    <span style={{
+                      position: "absolute", top: -8, right: -8, minWidth: 22, height: 22, pointerEvents: "none",
+                      borderRadius: 11, background: DIE_COLORS[sides], color: "#fff",
+                      fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px",
+                    }}>{count}</span>
+                  )}
+                  {count > 0 && (
+                    <button onClick={() => removeDie(sides)} aria-label={`Remove a d${sides}`} style={{
+                      position: "absolute", bottom: -8, left: -8, width: 26, height: 26, borderRadius: 13,
+                      background: t.panel, border: `1.5px solid ${t.borderStrong}`, color: t.textMid,
+                      fontSize: 18, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>−</button>
+                  )}
                 </div>
               );
             })}
           </div>
-          <div style={{ fontSize: 11, color: t.textDim, marginTop: 10 }}>Click to add · right-click to remove</div>
+          <div style={{ fontSize: 11, color: t.textDim, marginTop: 10 }}>Tap a die to add · tap − to remove</div>
         </div>
 
         {/* ── Modifier + advantage ── */}
