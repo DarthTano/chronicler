@@ -39,6 +39,64 @@ function PickerModal({ title, subtitle, onClose, t, children }) {
   );
 }
 
+// Equipment is stored as { name, type, qty }; older characters stored bare
+// strings, so normalize both shapes on read.
+function normItem(it) {
+  if (typeof it === "string") return { name: it, type: "Gear", qty: 1 };
+  return { name: it.name, type: it.type || "Gear", qty: it.qty || 1 };
+}
+
+// Full item details (weapon damage / armor AC) fetched from the SRD on demand.
+function ItemInfoModal({ item, onClose, t }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(item.type === "Weapon" || item.type === "Armor");
+  useEffect(() => {
+    if (item.type !== "Weapon" && item.type !== "Armor") return;
+    let cancelled = false;
+    const endpoint = item.type === "Weapon" ? "weapons" : "armor";
+    fetch(`https://api.open5e.com/v1/${endpoint}/?document__slug__in=wotc-srd&search=${encodeURIComponent(item.name)}&limit=5`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) { setData((d.results || []).find(x => x.name === item.name) || (d.results || [])[0] || null); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [item]);
+
+  const row = (label, value) => (value != null && value !== "") ? (
+    <div style={{ display: "flex", gap: 8, marginBottom: 5, fontSize: 13 }}>
+      <span style={{ fontWeight: 700, color: t.accent, whiteSpace: "nowrap" }}>{label}</span>
+      <span style={{ color: t.textMid }}>{value}</span>
+    </div>
+  ) : null;
+
+  return (
+    <PickerModal title={item.name} subtitle={item.qty > 1 ? `${item.type} ×${item.qty}` : item.type} onClose={onClose} t={t}>
+      <div style={{ overflowY: "auto" }}>
+        {loading ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Loading…</div>
+          : item.type === "Gear" ? <div style={{ fontSize: 14, color: t.textMid }}>Adventuring gear — no additional stats in the SRD.</div>
+          : !data ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Couldn't load details.</div>
+          : item.type === "Weapon" ? (
+            <>
+              {row("Damage", [data.damage_dice, data.damage_type].filter(Boolean).join(" "))}
+              {row("Properties", (data.properties || []).join(", "))}
+              {row("Category", data.category)}
+              {row("Weight", data.weight)}
+              {row("Cost", data.cost)}
+            </>
+          ) : (
+            <>
+              {row("Armor Class", data.ac_string || data.base_ac)}
+              {row("Category", data.category)}
+              {row("Stealth", data.stealth_disadvantage ? "Disadvantage" : "Normal")}
+              {row("Strength Req.", data.strength_requirement ? `Str ${data.strength_requirement}` : null)}
+              {row("Weight", data.weight)}
+              {row("Cost", data.cost)}
+            </>
+          )}
+      </div>
+    </PickerModal>
+  );
+}
+
 // Pick SRD weapons / armor / gear to add to inventory. Stays open for multiple adds.
 function ItemPicker({ onAdd, onClose, t }) {
   const [items, setItems] = useState([]);
@@ -59,7 +117,7 @@ function ItemPicker({ onAdd, onClose, t }) {
         {loading ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>Loading…</div>
           : filtered.length === 0 ? <div style={{ padding: 16, color: t.textDim, fontSize: 13 }}>No matches.</div>
           : filtered.map((it, i) => (
-            <button key={i} onClick={() => onAdd(it.name)}
+            <button key={i} onClick={() => onAdd({ name: it.name, type: it.type })}
               style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "transparent", border: "none", borderRadius: 7, padding: "8px 10px", cursor: "pointer", textAlign: "left" }}>
               <span style={{ fontSize: 13, color: t.text }}>{it.name}</span>
               <span style={{ fontSize: 11, color: t.textDim }}>{it.type}</span>
@@ -374,6 +432,7 @@ export default function CharactersPage() {
   const [isMobile, setIsMobile] = useState(false);
   const [hpAmount, setHpAmount] = useState("");
   const [itemPickerOpen, setItemPickerOpen] = useState(false);
+  const [infoItem, setInfoItem] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
   const [saveError, setSaveError] = useState(null);
@@ -453,11 +512,27 @@ export default function CharactersPage() {
     updateChar(ch => ({ ...ch, hp: { ...ch.hp, temp: Math.max(0, n) } }));
   }
 
-  function addItemName(name) {
-    updateChar(ch => ({ ...ch, equipment: [...ch.equipment, name] }));
+  function addItem(item) {
+    updateChar(ch => {
+      const list = (ch.equipment || []).map(normItem);
+      const i = list.findIndex(x => x.name === item.name && x.type === item.type);
+      if (i >= 0) list[i] = { ...list[i], qty: list[i].qty + 1 };
+      else list.push({ name: item.name, type: item.type || "Gear", qty: 1 });
+      return { ...ch, equipment: list };
+    });
   }
-  function removeItem(idx) {
-    updateChar(ch => ({ ...ch, equipment: ch.equipment.filter((_, i) => i !== idx) }));
+  function setItemQty(name, type, delta) {
+    updateChar(ch => {
+      const list = (ch.equipment || []).map(normItem);
+      const i = list.findIndex(x => x.name === name && x.type === type);
+      if (i < 0) return ch;
+      const qty = Math.max(0, list[i].qty + delta);
+      if (qty === 0) list.splice(i, 1); else list[i] = { ...list[i], qty };
+      return { ...ch, equipment: list };
+    });
+  }
+  function removeItemByKey(name, type) {
+    updateChar(ch => ({ ...ch, equipment: (ch.equipment || []).map(normItem).filter(x => !(x.name === name && x.type === type)) }));
   }
 
   async function deleteChar() {
@@ -680,27 +755,44 @@ export default function CharactersPage() {
           </div>
         )}
 
-        {activeTab === "gear" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ margin: 0, fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Inventory</h3>
-              <button onClick={() => setItemPickerOpen(true)} style={{ background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
-            </div>
-            {char.equipment.length === 0 ? (
-              <div style={{ ...card, padding: 32, textAlign: "center", color: t.textDim, fontSize: 14 }}>No gear yet — use “Add item” to pick from SRD weapons, armor, and gear.</div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
-                {char.equipment.map((item, i) => (
-                  <div key={i} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 16 }}>{item.includes("gp") ? "🪙" : item.includes("Armor") ? "🛡️" : /Axe|Dagger|Staff|Sword|Bow/.test(item) ? "⚔️" : item.includes("Pack") ? "🎒" : "✨"}</span>
-                    <span style={{ fontSize: 13, color: t.textMid, flex: 1, minWidth: 0 }}>{item}</span>
-                    <button onClick={() => removeItem(i)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
-                  </div>
-                ))}
+        {activeTab === "gear" && (() => {
+          const items = (char.equipment || []).map(normItem);
+          const iconFor = (it) => it.type === "Weapon" ? "⚔️" : it.type === "Armor" ? "🛡️" : it.name.includes("Pack") ? "🎒" : it.name.includes("Rations") ? "🍖" : "✨";
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0, fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Inventory</h3>
+                <button onClick={() => setItemPickerOpen(true)} style={{ background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
               </div>
-            )}
-          </div>
-        )}
+              {items.length === 0 ? (
+                <div style={{ ...card, padding: 32, textAlign: "center", color: t.textDim, fontSize: 14 }}>No gear yet — use “Add item” to pick from SRD weapons, armor, and gear.</div>
+              ) : [["Weapon", "Weapons"], ["Armor", "Armor"], ["Gear", "Gear"]].map(([type, label]) => {
+                const group = items.filter(it => it.type === type);
+                if (group.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
+                      {group.map(it => (
+                        <div key={it.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{iconFor(it)}</span>
+                          <button onClick={() => setInfoItem(it)} title="Item details"
+                            style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</button>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                            <button onClick={() => setItemQty(it.name, it.type, -1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>−</button>
+                            <span style={{ fontSize: 13, fontWeight: 700, minWidth: 18, textAlign: "center" }}>{it.qty}</span>
+                            <button onClick={() => setItemQty(it.name, it.type, 1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>+</button>
+                          </div>
+                          <button onClick={() => removeItemByKey(it.name, it.type)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {activeTab === "bio" && char.bio && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -731,8 +823,9 @@ export default function CharactersPage() {
       </main>
 
       {itemPickerOpen && (
-        <ItemPicker onAdd={addItemName} onClose={() => setItemPickerOpen(false)} t={t} />
+        <ItemPicker onAdd={addItem} onClose={() => setItemPickerOpen(false)} t={t} />
       )}
+      {infoItem && <ItemInfoModal item={infoItem} onClose={() => setInfoItem(null)} t={t} />}
 
       {/* Type-the-name delete confirmation */}
       {confirmingDelete && !isDemo && char && (
