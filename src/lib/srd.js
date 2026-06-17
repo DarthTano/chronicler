@@ -110,6 +110,12 @@ const CANTRIPS_KNOWN = { Bard: 2, Cleric: 3, Druid: 2, Sorcerer: 4, Warlock: 2, 
 const SPELLS_KNOWN = { Bard: 4, Sorcerer: 2, Warlock: 2, Wizard: 6, Ranger: 0 }; // "known" casters
 const PREPARED_ABILITY = { Cleric: "WIS", Druid: "WIS", Paladin: "CHA" }; // prepared = mod + level
 
+// Which ability a class casts with (for spell attack/damage modifiers).
+export const CLASS_SPELL_ABILITY = {
+  Bard: "CHA", Cleric: "WIS", Druid: "WIS", Paladin: "CHA",
+  Ranger: "WIS", Sorcerer: "CHA", Warlock: "CHA", Wizard: "INT",
+};
+
 export function spellCapacity(cls, level = 1, statMods = {}) {
   const cantrips = CANTRIPS_KNOWN[cls] || 0;
   let spells = 0;

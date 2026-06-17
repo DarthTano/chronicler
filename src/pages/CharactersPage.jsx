@@ -6,7 +6,7 @@ import { supabase } from "../lib/supabase.js";
 import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
-import { parseTrait, slotsForCharacter, maxSpellLevel, spellCapacity, fetchEquipment } from "../lib/srd.js";
+import { parseTrait, slotsForCharacter, maxSpellLevel, spellCapacity, fetchEquipment, CLASS_SPELL_ABILITY } from "../lib/srd.js";
 import { useDice } from "../DiceContext.jsx";
 
 // Pull the first dice expression (e.g. "1d10", "8d6") out of spell description prose.
@@ -54,7 +54,7 @@ function normItem(it) {
 }
 
 // Full item details (weapon damage / armor AC) fetched from the SRD on demand.
-function ItemInfoModal({ item, onClose, t }) {
+function ItemInfoModal({ item, char, onClose, t }) {
   const { roll } = useDice();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(item.type === "Weapon" || item.type === "Armor");
@@ -89,12 +89,20 @@ function ItemInfoModal({ item, onClose, t }) {
               {row("Category", data.category)}
               {row("Weight", data.weight)}
               {row("Cost", data.cost)}
-              {data.damage_dice && (
-                <button onClick={() => roll(data.damage_dice, { label: `${item.name} damage` })}
-                  style={{ marginTop: 12, background: t.accent, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-                  🎲 Roll damage ({data.damage_dice})
-                </button>
-              )}
+              {data.damage_dice && (() => {
+                const str = char?.stats?.STR || 0, dex = char?.stats?.DEX || 0;
+                const props = (data.properties || []).map(p => String(p).toLowerCase());
+                const isFinesse = props.some(p => p.includes("finesse"));
+                const isRanged = /ranged/i.test(data.category || "");
+                const mod = isFinesse ? Math.max(str, dex) : isRanged ? dex : str;
+                const modText = mod ? (mod > 0 ? ` + ${mod}` : ` − ${Math.abs(mod)}`) : "";
+                return (
+                  <button onClick={() => roll(data.damage_dice, { label: `${item.name} damage`, modifier: mod })}
+                    style={{ marginTop: 12, background: t.accent, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                    🎲 Roll damage ({data.damage_dice}{modText})
+                  </button>
+                );
+              })()}
             </>
           ) : (
             <>
@@ -298,7 +306,12 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
         desc = sp.slug ? data.desc : ((data.results || []).find(x => x.name === sp.name) || {}).desc;
       }
       const dice = parseDamageDice(desc);
-      if (dice) roll(dice, { label: sp.name });
+      if (dice) {
+        // Add the spellcasting ability modifier (e.g. a cantrip with a damage roll).
+        const ability = CLASS_SPELL_ABILITY[char.class];
+        const mod = ability ? (char.stats?.[ability] || 0) : 0;
+        roll(dice, { label: sp.name, modifier: mod });
+      }
     } catch { /* no damage to roll */ }
   }
   const known = char.spells || [];
@@ -612,8 +625,29 @@ export default function CharactersPage() {
     if (isMobile) setSidebarOpen(false);
   }
 
-  const tabs = ["stats", "spells", "features", "gear", ...(char?.bio ? ["bio"] : [])];
+  const tabs = ["stats", "spells", "features", "equipped", "backpack", ...(char?.bio ? ["bio"] : [])];
   const card = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: t.radius };
+
+  // Shared inventory item card, used by both the Equipped and Backpack tabs.
+  const iconForItem = (it) => it.type === "Weapon" ? "⚔️" : it.type === "Armor" ? "🛡️" : it.name.includes("Pack") ? "🎒" : it.name.includes("Rations") ? "🍖" : "✨";
+  const itemCard = (it) => (
+    <div key={it.type + it.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderLeft: it.equipped ? `3px solid ${t.accent}` : `1px solid ${t.border}` }}>
+      <span style={{ fontSize: 16, flexShrink: 0 }}>{iconForItem(it)}</span>
+      <button onClick={() => setInfoItem(it)} title="Item details" style={{ flex: 1, minWidth: 80, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</button>
+      {(it.type === "Weapon" || it.type === "Armor") && (
+        <button onClick={() => toggleEquip(it.name, it.type)} title={it.equipped ? "Unequip" : "Equip"} style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "4px 9px", cursor: "pointer", border: `1px solid ${it.equipped ? t.accent : t.border}`, background: it.equipped ? t.accentSoft : "transparent", color: it.equipped ? t.accent : t.textMid }}>{it.equipped ? "Equipped" : "Equip"}</button>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <button onClick={() => setItemQty(it.name, it.type, -1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>−</button>
+        <span style={{ fontSize: 13, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{it.qty}</span>
+        <button onClick={() => setItemQty(it.name, it.type, 1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>+</button>
+      </div>
+      <button onClick={() => removeItemByKey(it.name, it.type)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+    </div>
+  );
+  const itemGrid = (list) => (
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>{list.map(itemCard)}</div>
+  );
 
   if (loading) {
     return <div style={{ padding: 60, textAlign: "center", color: t.textDim }}>Loading your party…</div>;
@@ -814,59 +848,46 @@ export default function CharactersPage() {
           </div>
         )}
 
-        {activeTab === "gear" && (() => {
-          const items = (char.equipment || []).map(normItem);
-          const iconFor = (it) => it.type === "Weapon" ? "⚔️" : it.type === "Armor" ? "🛡️" : it.name.includes("Pack") ? "🎒" : it.name.includes("Rations") ? "🍖" : "✨";
-          const equipped = items.filter(it => it.equipped && (it.type === "Weapon" || it.type === "Armor"));
-          const qtyBtn = { width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panelAlt, color: t.text, cursor: "pointer", fontSize: 13, lineHeight: 1 };
-          const itemCard = (it) => (
-            <div key={it.type + it.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderLeft: it.equipped ? `3px solid ${t.accent}` : `1px solid ${t.border}` }}>
-              <span style={{ fontSize: 16, flexShrink: 0 }}>{iconFor(it)}</span>
-              <button onClick={() => setInfoItem(it)} title="Item details"
-                style={{ flex: 1, minWidth: 80, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</button>
-              {(it.type === "Weapon" || it.type === "Armor") && (
-                <button onClick={() => toggleEquip(it.name, it.type)} title={it.equipped ? "Unequip" : "Equip"}
-                  style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "4px 9px", cursor: "pointer", border: `1px solid ${it.equipped ? t.accent : t.border}`, background: it.equipped ? t.accentSoft : "transparent", color: it.equipped ? t.accent : t.textMid }}>{it.equipped ? "Equipped" : "Equip"}</button>
-              )}
-              <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                <button onClick={() => setItemQty(it.name, it.type, -1)} style={qtyBtn}>−</button>
-                <span style={{ fontSize: 13, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{it.qty}</span>
-                <button onClick={() => setItemQty(it.name, it.type, 1)} style={qtyBtn}>+</button>
-              </div>
-              <button onClick={() => removeItemByKey(it.name, it.type)} title="Remove" style={{ background: "none", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+        {activeTab === "equipped" && (() => {
+          const equipped = (char.equipment || []).map(normItem).filter(it => it.equipped && (it.type === "Weapon" || it.type === "Armor"));
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {equipped.length === 0 ? (
+                <div style={{ ...card, padding: 32, textAlign: "center", color: t.textDim, fontSize: 14 }}>Nothing equipped — equip weapons or armor from your Backpack.</div>
+              ) : [["Weapon", "Weapons"], ["Armor", "Armor"]].map(([type, label]) => {
+                const group = equipped.filter(it => it.type === type);
+                if (group.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
+                    {itemGrid(group)}
+                  </div>
+                );
+              })}
             </div>
           );
-          const grid = (list) => (
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>{list.map(itemCard)}</div>
-          );
+        })()}
+
+        {activeTab === "backpack" && (() => {
+          const items = (char.equipment || []).map(normItem);
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ margin: 0, fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Inventory</h3>
+                <h3 style={{ margin: 0, fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>Backpack</h3>
                 <button onClick={() => setItemPickerOpen(true)} style={{ background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
               </div>
               {items.length === 0 ? (
                 <div style={{ ...card, padding: 32, textAlign: "center", color: t.textDim, fontSize: 14 }}>No gear yet — use “Add item” to pick from SRD weapons, armor, and gear.</div>
-              ) : (
-                <>
-                  {equipped.length > 0 && (
-                    <div>
-                      <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.accent, textTransform: "uppercase" }}>Equipped</h3>
-                      {grid(equipped)}
-                    </div>
-                  )}
-                  {[["Weapon", "Weapons"], ["Armor", "Armor"], ["Gear", "Gear"]].map(([type, label]) => {
-                    const group = items.filter(it => it.type === type);
-                    if (group.length === 0) return null;
-                    return (
-                      <div key={type}>
-                        <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
-                        {grid(group)}
-                      </div>
-                    );
-                  })}
-                </>
-              )}
+              ) : [["Weapon", "Weapons"], ["Armor", "Armor"], ["Gear", "Gear"]].map(([type, label]) => {
+                const group = items.filter(it => it.type === type);
+                if (group.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>
+                    {itemGrid(group)}
+                  </div>
+                );
+              })}
             </div>
           );
         })()}
@@ -902,7 +923,7 @@ export default function CharactersPage() {
       {itemPickerOpen && (
         <ItemPicker onAdd={addItem} onClose={() => setItemPickerOpen(false)} t={t} />
       )}
-      {infoItem && <ItemInfoModal item={infoItem} onClose={() => setInfoItem(null)} t={t} />}
+      {infoItem && <ItemInfoModal item={infoItem} char={char} onClose={() => setInfoItem(null)} t={t} />}
 
       {/* Type-the-name delete confirmation */}
       {confirmingDelete && !isDemo && char && (
