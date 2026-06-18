@@ -64,6 +64,42 @@ export function parseTrait(text) {
   return { title: "", body: (text || "").trim() };
 }
 
+// ── Leveling ────────────────────────────────────────────────────────────────
+
+const CLASS_HIT_DIE = {
+  Barbarian: 12, Bard: 8, Cleric: 8, Druid: 8, Fighter: 10, Monk: 8,
+  Paladin: 10, Ranger: 10, Rogue: 8, Sorcerer: 6, Warlock: 8, Wizard: 6,
+};
+export const hitDieFor = (cls) => CLASS_HIT_DIE[cls] || 8;
+export const avgHitDie = (die) => Math.floor(die / 2) + 1;          // 5e fixed average
+export const profForLevel = (level) => Math.ceil((level || 1) / 4) + 1;
+export const ASI_LEVELS = [4, 8, 12, 16, 19];
+
+// Recompute the stats that change with level / ability scores. Preserves HP,
+// equipment, spells, conditions, etc. Leaves AC alone (armor AC is separate).
+export function applyDerived(char) {
+  const prof = profForLevel(char.level);
+  const stats = {};
+  for (const ab of ABILITIES) stats[ab] = abilityMod(char.statScores?.[ab] ?? 10);
+  const saves = {};
+  for (const ab of ABILITIES) saves[ab] = stats[ab] + (char.saveProf?.[ab] ? prof : 0);
+  const skills = (char.skills || []).map(sk => {
+    const ab = SKILL_ABILITY[sk.name];
+    return { ...sk, mod: (ab ? stats[ab] : 0) + (sk.prof ? prof : 0) };
+  });
+  const sc = CLASS_SPELL_ABILITY[char.class];
+  return {
+    ...char,
+    proficiencyBonus: prof,
+    stats,
+    saves,
+    skills,
+    initiative: fmtMod(stats.DEX),
+    spellSaveDC: char.spellSaveDC != null && sc ? 8 + prof + stats[sc] : char.spellSaveDC,
+    spellAttackBonus: char.spellAttackBonus != null && sc ? fmtMod(prof + stats[sc]) : char.spellAttackBonus,
+  };
+}
+
 // ── Spell slots (auto-derived from class + level) ────────────────────────────
 
 const FULL_CASTERS = ["Bard", "Cleric", "Druid", "Sorcerer", "Wizard"];
@@ -135,6 +171,21 @@ export const GEAR = [
   "Rope, Silk (50 ft)", "Sealing Wax", "Shovel", "Signal Whistle", "Soap", "Spellbook", "Tent (Two-Person)",
   "Thieves' Tools", "Tinderbox", "Torch", "Vial", "Waterskin", "Whetstone",
 ];
+
+// Fetch SRD weapon + armor stats keyed by name (for AC + attack computation).
+export async function fetchEquipmentStats() {
+  const grab = (p) => fetch(`${API}/${p}/?${SRD}&limit=200`).then(r => r.json()).catch(() => ({ results: [] }));
+  const [w, a] = await Promise.all([grab("weapons"), grab("armor")]);
+  const weapons = {};
+  for (const x of (w.results || [])) {
+    weapons[x.name] = { damage_dice: x.damage_dice, damage_type: x.damage_type, properties: (x.properties || []).map(String), category: x.category || "" };
+  }
+  const armor = {};
+  for (const x of (a.results || [])) {
+    armor[x.name] = { base_ac: x.base_ac, ac_string: x.ac_string, category: x.category || "", stealth: x.stealth_disadvantage };
+  }
+  return { weapons, armor };
+}
 
 // Fetch the SRD weapons + armor, combined with curated gear, for the item picker.
 export async function fetchEquipment() {

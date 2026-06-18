@@ -6,13 +6,36 @@ import { supabase } from "../lib/supabase.js";
 import {
   SAMPLE_CHARACTERS, CONDITIONS, STAT_ORDER, SCHOOL_COLORS,
 } from "../data/characters.js";
-import { parseTrait, slotsForCharacter, maxSpellLevel, spellCapacity, fetchEquipment, CLASS_SPELL_ABILITY } from "../lib/srd.js";
+import {
+  parseTrait, slotsForCharacter, maxSpellLevel, spellCapacity, fetchEquipment, fetchEquipmentStats, CLASS_SPELL_ABILITY,
+  profForLevel, hitDieFor, avgHitDie, applyDerived, ASI_LEVELS, ABILITIES, fmtMod,
+} from "../lib/srd.js";
 import { useDice } from "../DiceContext.jsx";
 
 // Pull the first dice expression (e.g. "1d10", "8d6") out of spell description prose.
 function parseDamageDice(desc) {
   const m = (desc || "").match(/(\d+)d(\d+)/);
   return m ? `${m[1]}d${m[2]}` : null;
+}
+
+// Fetch a spell's description and roll its damage on the shared 3D dice (+casting mod).
+async function rollSpellDamage(sp, char, roll) {
+  try {
+    let desc = sp.desc;
+    if (!desc) {
+      const url = sp.slug
+        ? `https://api.open5e.com/v1/spells/${sp.slug}/`
+        : `https://api.open5e.com/v1/spells/?search=${encodeURIComponent(sp.name)}&limit=5`;
+      const data = await fetch(url).then(r => r.json());
+      desc = sp.slug ? data.desc : ((data.results || []).find(x => x.name === sp.name) || {}).desc;
+    }
+    const dice = parseDamageDice(desc);
+    if (dice) {
+      const ability = CLASS_SPELL_ABILITY[char.class];
+      const mod = ability ? (char.stats?.[ability] || 0) : 0;
+      roll(dice, { label: sp.name, modifier: mod });
+    }
+  } catch { /* no damage to roll */ }
 }
 
 // Render inline Markdown (**bold**, *italic*, _italic_) as elements, dropping the markers.
@@ -202,7 +225,7 @@ function SpellPicker({ cls, maxLvl, known, caps, onAdd, onClose, t }) {
             const disabled = already || atCap;
             return (
               <button key={sp.slug || sp.name} disabled={disabled}
-                onClick={() => !disabled && onAdd({ name: sp.name, level: sp.level_int, school: cap(sp.school), slug: sp.slug })}
+                onClick={() => !disabled && onAdd({ name: sp.name, level: sp.level_int, school: cap(sp.school), slug: sp.slug, attack: /(ranged|melee) spell attack/i.test(sp.desc || "") })}
                 style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 7, padding: "8px 10px", cursor: disabled ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: disabled ? 0.5 : 1 }}>
                 <span style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: SCHOOL_COLORS[cap(sp.school)] || t.accent }} />
                 <span style={{ flex: 1, minWidth: 0 }}>
@@ -294,26 +317,6 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
     castTimer.current = setTimeout(() => setCastMsg(null), 1800);
   }
 
-  // Fetch the spell's description and roll its damage dice on the 3D table.
-  async function rollSpellDamage(sp) {
-    try {
-      let desc = sp.desc;
-      if (!desc) {
-        const url = sp.slug
-          ? `https://api.open5e.com/v1/spells/${sp.slug}/`
-          : `https://api.open5e.com/v1/spells/?search=${encodeURIComponent(sp.name)}&limit=5`;
-        const data = await fetch(url).then(r => r.json());
-        desc = sp.slug ? data.desc : ((data.results || []).find(x => x.name === sp.name) || {}).desc;
-      }
-      const dice = parseDamageDice(desc);
-      if (dice) {
-        // Add the spellcasting ability modifier (e.g. a cantrip with a damage roll).
-        const ability = CLASS_SPELL_ABILITY[char.class];
-        const mod = ability ? (char.stats?.[ability] || 0) : 0;
-        roll(dice, { label: sp.name, modifier: mod });
-      }
-    } catch { /* no damage to roll */ }
-  }
   const known = char.spells || [];
   const slots = slotsForCharacter(char.class, char.level);
   const usedMap = char.slotsUsed || {};
@@ -353,7 +356,12 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
       });
     }
     flash(`✨ Cast ${sp.name}`);
-    rollSpellDamage(sp); // rolls 3D damage dice if the spell deals any
+    rollSpellDamage(sp, char, roll); // rolls 3D damage dice if the spell deals any
+  }
+  function spellToHit(sp) {
+    const sc = CLASS_SPELL_ABILITY[char.class];
+    const bonus = (char.proficiencyBonus || 2) + (sc ? (char.stats?.[sc] || 0) : 0);
+    roll("1d20", { label: `${sp.name} to hit`, modifier: bonus });
   }
 
   const spellCard = (sp) => {
@@ -369,6 +377,9 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
             <span style={{ fontSize: 11, color: SCHOOL_COLORS[sp.school] || t.textDim, fontWeight: 600 }}>{sp.school}</span>
           </div>
         </button>
+        {sp.attack && (
+          <button onClick={() => spellToHit(sp)} title="Roll a spell attack" style={{ flexShrink: 0, background: t.accentSoft, color: t.accent, border: `1px solid ${t.accent}`, borderRadius: 7, padding: "5px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🎯</button>
+        )}
         <button onClick={() => cast(sp)} disabled={!canCast}
           title={sp.level === 0 ? "Cast cantrip (at will)" : left <= 0 ? "No slots left" : "Cast — uses a slot"}
           style={{ flexShrink: 0, background: canCast ? t.accentSoft : "transparent", color: canCast ? t.accent : t.textDim, border: `1px solid ${canCast ? t.accent : t.border}`, borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: canCast ? "pointer" : "default" }}>Cast</button>
@@ -451,6 +462,251 @@ function SpellsTab({ char, updateChar, t, isMobile }) {
   );
 }
 
+// Armor Class from equipped armor (+ Dex by category) and shield. Unarmored = 10 + Dex.
+function computeAC(char, equipStats) {
+  const dex = char.stats?.DEX || 0;
+  const eq = (char.equipment || []).map(normItem).filter(i => i.equipped && i.type === "Armor");
+  const shield = eq.find(i => /shield/i.test(i.name));
+  const body = eq.find(i => !/shield/i.test(i.name));
+  let ac = 10 + dex;
+  const a = body && equipStats?.armor?.[body.name];
+  if (a) {
+    const base = a.base_ac || 10;
+    const cat = (a.category || "").toLowerCase();
+    ac = cat.includes("light") ? base + dex : cat.includes("medium") ? base + Math.min(2, dex) : base;
+  }
+  if (shield) ac += 2;
+  return ac;
+}
+
+// Actions tab: a one-stop turn list — attacks from equipped weapons, spell casts,
+// and a reference of the standard actions.
+function ActionsTab({ char, updateChar, equipStats, t }) {
+  const { roll } = useDice();
+  const card = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: t.radius };
+  const prof = char.proficiencyBonus || profForLevel(char.level);
+  const str = char.stats?.STR || 0, dex = char.stats?.DEX || 0;
+  const equippedWeapons = (char.equipment || []).map(normItem).filter(i => i.equipped && i.type === "Weapon");
+  const slots = slotsForCharacter(char.class, char.level);
+  const usedMap = char.slotsUsed || {};
+  const known = [...(char.spells || [])].sort((a, b) => (a.level - b.level) || a.name.localeCompare(b.name));
+
+  function weaponMods(name) {
+    const w = equipStats?.weapons?.[name];
+    const props = (w?.properties || []).map(p => p.toLowerCase());
+    const ranged = /ranged/i.test(w?.category || "");
+    const finesse = props.some(p => p.includes("finesse"));
+    const mod = finesse ? Math.max(str, dex) : ranged ? dex : str;
+    return { mod, dmgDice: w?.damage_dice, dmgType: w?.damage_type };
+  }
+  function slotsLeft(level) {
+    const slot = slots.find(s => s.level === level);
+    return slot ? slot.total - Math.min(usedMap[level] || 0, slot.total) : 0;
+  }
+  function castSpell(sp) {
+    if (sp.level >= 1) {
+      if (slotsLeft(sp.level) <= 0) return;
+      updateChar(ch => {
+        const slot = slots.find(s => s.level === sp.level);
+        const cur = (ch.slotsUsed || {})[sp.level] || 0;
+        return { ...ch, slotsUsed: { ...(ch.slotsUsed || {}), [sp.level]: Math.min(slot?.total ?? cur + 1, cur + 1) } };
+      });
+    }
+    rollSpellDamage(sp, char, roll);
+  }
+  function spellToHit(sp) {
+    const sc = CLASS_SPELL_ABILITY[char.class];
+    const bonus = prof + (sc ? (char.stats?.[sc] || 0) : 0);
+    roll("1d20", { label: `${sp.name} to hit`, modifier: bonus });
+  }
+
+  const STANDARD = [
+    ["Dash", "Gain extra movement equal to your speed."],
+    ["Disengage", "Your movement won't provoke opportunity attacks."],
+    ["Dodge", "Attackers have disadvantage; Dex saves with advantage."],
+    ["Help", "Give an ally advantage on a check or attack."],
+    ["Hide", "Make a Stealth check to hide."],
+    ["Ready", "Prepare an action to trigger on a condition."],
+    ["Search", "Make a Perception or Investigation check."],
+    ["Use an Object", "Interact with a second object or feature."],
+  ];
+  const head = (label) => <h3 style={{ margin: "0 0 8px", fontSize: 11, letterSpacing: 1, color: t.textDim, textTransform: "uppercase" }}>{label}</h3>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div>
+        {head("Attacks")}
+        {equippedWeapons.length === 0 ? (
+          <div style={{ ...card, padding: 20, textAlign: "center", color: t.textDim, fontSize: 13 }}>No weapons equipped — equip one in your Backpack to attack.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {equippedWeapons.map(it => {
+              const { mod, dmgDice, dmgType } = weaponMods(it.name);
+              return (
+                <div key={it.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 120 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>⚔️ {it.name}</div>
+                    <div style={{ fontSize: 11, color: t.textDim }}>{fmtMod(mod + prof)} to hit · {dmgDice || "—"}{dmgType ? ` ${dmgType}` : ""}{mod ? ` ${fmtMod(mod)}` : ""}</div>
+                  </div>
+                  <button onClick={() => roll("1d20", { label: `${it.name} attack`, modifier: mod + prof })} style={{ flexShrink: 0, background: t.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🎯 Attack</button>
+                  <button onClick={() => dmgDice && roll(dmgDice, { label: `${it.name} damage`, modifier: mod })} disabled={!dmgDice} style={{ flexShrink: 0, background: t.accentSoft, color: t.accent, border: `1px solid ${t.accent}`, borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: dmgDice ? "pointer" : "default", opacity: dmgDice ? 1 : 0.5 }}>🎲 Damage</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {known.length > 0 && (
+        <div>
+          {head("Spells")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {known.map(sp => {
+              const canCast = sp.level === 0 || slotsLeft(sp.level) > 0;
+              return (
+                <div key={sp.name} style={{ ...card, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{sp.name}</div>
+                    <div style={{ fontSize: 11, color: t.textDim }}>{sp.level === 0 ? "Cantrip · at will" : `Level ${sp.level} · ${slotsLeft(sp.level)} left`}{sp.attack ? " · spell attack" : ""}</div>
+                  </div>
+                  {sp.attack && (
+                    <button onClick={() => spellToHit(sp)} style={{ flexShrink: 0, background: t.accentSoft, color: t.accent, border: `1px solid ${t.accent}`, borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🎯 To Hit</button>
+                  )}
+                  <button onClick={() => canCast && castSpell(sp)} disabled={!canCast} style={{ flexShrink: 0, background: canCast ? t.accent : t.panelAlt, color: canCast ? "#fff" : t.textDim, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: canCast ? "pointer" : "default" }}>Cast</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div>
+        {head("Standard Actions")}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {STANDARD.map(([name, desc]) => (
+            <div key={name} style={{ ...card, padding: "8px 12px" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{name}.</span>{" "}
+              <span style={{ fontSize: 13, color: t.textMid }}>{desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Level-up: choose HP gain (average or roll) and, on ASI levels, distribute 2 points.
+function LevelUpModal({ char, onConfirm, onClose, t }) {
+  const newLevel = (char.level || 1) + 1;
+  const hitDie = hitDieFor(char.class);
+  const conMod = char.stats?.CON || 0;
+  const isASI = ASI_LEVELS.includes(newLevel);
+  const [method, setMethod] = useState("average");
+  const [rolled, setRolled] = useState(null);
+  const [asi, setAsi] = useState({ STR: 0, DEX: 0, CON: 0, INT: 0, WIS: 0, CHA: 0 });
+
+  const dieValue = method === "average" ? avgHitDie(hitDie) : (rolled ?? avgHitDie(hitDie));
+  const hpGain = Math.max(1, dieValue + conMod);
+  const asiSpent = ABILITIES.reduce((s, a) => s + asi[a], 0);
+  const asiValid = !isASI || asiSpent === 2;
+
+  function adjustAsi(ab, delta) {
+    setAsi(prev => {
+      const next = prev[ab] + delta;
+      if (next < 0 || next > 2) return prev;
+      if ((char.statScores?.[ab] ?? 10) + next > 20) return prev;
+      const spent = ABILITIES.reduce((s, a) => s + (a === ab ? next : prev[a]), 0);
+      if (spent > 2) return prev;
+      return { ...prev, [ab]: next };
+    });
+  }
+
+  function confirm() {
+    const asiMap = {};
+    if (isASI) for (const a of ABILITIES) if (asi[a]) asiMap[a] = asi[a];
+    onConfirm({ hpGain, asi: isASI ? asiMap : null });
+  }
+
+  const pill = (active) => ({
+    flex: 1, border: "none", cursor: "pointer", borderRadius: 8, padding: "8px 0",
+    background: active ? t.accent : "transparent", color: active ? "#fff" : t.textMid, fontSize: 13, fontWeight: 600,
+  });
+
+  return (
+    <PickerModal title={`Level up to ${newLevel}`} subtitle={`${char.class} · proficiency +${profForLevel(newLevel)}`} onClose={onClose} t={t}>
+      <div style={{ overflowY: "auto" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: t.textDim, letterSpacing: 0.5, marginBottom: 8 }}>HIT POINTS (+ CON {fmtMod(conMod)})</div>
+        <div style={{ display: "flex", gap: 4, background: t.panelAlt, padding: 4, borderRadius: 9, border: `1px solid ${t.border}`, marginBottom: 10 }}>
+          <button onClick={() => setMethod("average")} style={pill(method === "average")}>Average ({avgHitDie(hitDie)})</button>
+          <button onClick={() => setMethod("roll")} style={pill(method === "roll")}>Roll d{hitDie}</button>
+        </div>
+        {method === "roll" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <button onClick={() => setRolled(1 + Math.floor(Math.random() * hitDie))} style={{ background: t.panelAlt, border: `1px solid ${t.border}`, color: t.text, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🎲 Roll</button>
+            <span style={{ fontSize: 14, color: t.textMid }}>{rolled != null ? `Rolled ${rolled}` : "Tap to roll your hit die"}</span>
+          </div>
+        )}
+        <div style={{ ...{ background: t.accentSoft, color: t.accent }, borderRadius: 9, padding: "10px 14px", fontSize: 14, fontWeight: 700, marginBottom: 18 }}>
+          +{hpGain} HP → {char.hp.max + hpGain} max
+        </div>
+
+        {isASI && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: t.textDim, letterSpacing: 0.5, marginBottom: 8 }}>
+              ABILITY SCORE IMPROVEMENT — assign 2 points ({asiSpent}/2)
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {ABILITIES.map(ab => {
+                const base = char.statScores?.[ab] ?? 10;
+                return (
+                  <div key={ab} style={{ display: "flex", alignItems: "center", gap: 10, background: t.panelAlt, borderRadius: 9, padding: "8px 12px" }}>
+                    <span style={{ width: 36, fontWeight: 700, color: t.textMid }}>{ab}</span>
+                    <span style={{ fontSize: 13, color: t.textDim }}>{base} → <strong style={{ color: t.text }}>{base + asi[ab]}</strong></span>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                      <button onClick={() => adjustAsi(ab, -1)} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel, color: t.text, cursor: "pointer", fontWeight: 700 }}>−</button>
+                      <span style={{ width: 18, textAlign: "center", fontWeight: 700 }}>{asi[ab]}</span>
+                      <button onClick={() => adjustAsi(ab, 1)} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel, color: t.text, cursor: "pointer", fontWeight: 700 }}>+</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <button onClick={confirm} disabled={!asiValid} style={{ width: "100%", padding: "12px 0", borderRadius: 9, border: "none", background: asiValid ? t.accent : t.panelAlt, color: asiValid ? "#fff" : t.textDim, fontSize: 15, fontWeight: 700, cursor: asiValid ? "pointer" : "default" }}>
+          ⬆ Confirm level up
+        </button>
+      </div>
+    </PickerModal>
+  );
+}
+
+// Short rest: spend hit dice to heal.
+function ShortRestModal({ char, onSpend, onClose, t }) {
+  const hitDie = hitDieFor(char.class);
+  const conMod = char.stats?.CON || 0;
+  const available = (char.level || 1) - (char.hitDiceUsed || 0);
+
+  return (
+    <PickerModal title="Short rest" subtitle={`Spend Hit Dice (d${hitDie} + CON ${fmtMod(conMod)}) to heal`} onClose={onClose} t={t}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontSize: 14, color: t.textMid }}>
+          Hit Dice available: <strong style={{ color: t.text }}>{available}</strong> / {char.level || 1}
+        </div>
+        <div style={{ fontSize: 14, color: t.textMid }}>
+          HP: <strong style={{ color: t.text }}>{char.hp.current}</strong> / {char.hp.max}
+        </div>
+        <button onClick={onSpend} disabled={available <= 0 || char.hp.current >= char.hp.max}
+          style={{ padding: "11px 0", borderRadius: 9, border: "none", background: (available > 0 && char.hp.current < char.hp.max) ? t.accent : t.panelAlt, color: (available > 0 && char.hp.current < char.hp.max) ? "#fff" : t.textDim, fontSize: 14, fontWeight: 700, cursor: (available > 0 && char.hp.current < char.hp.max) ? "pointer" : "default" }}>
+          🎲 Spend a Hit Die
+        </button>
+        <div style={{ fontSize: 12, color: t.textDim }}>Tip: a long rest restores HP, spell slots, and some Hit Dice.</div>
+      </div>
+    </PickerModal>
+  );
+}
+
 function HPBar({ hp, t }) {
   const pct = Math.max(0, Math.min(100, (hp.current / hp.max) * 100));
   const color = pct > 60 ? t.good : pct > 30 ? t.warn : t.bad;
@@ -502,6 +758,9 @@ export default function CharactersPage() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
   const [saveError, setSaveError] = useState(null);
+  const [levelUpOpen, setLevelUpOpen] = useState(false);
+  const [shortRestOpen, setShortRestOpen] = useState(false);
+  const [equipStats, setEquipStats] = useState(null);
 
   const char = characters.find(c => c.id === selectedId);
   const isDemo = !configured || !user;
@@ -512,6 +771,39 @@ export default function CharactersPage() {
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // Load SRD weapon/armor stats once, for AC and attack actions.
+  useEffect(() => {
+    let cancelled = false;
+    fetchEquipmentStats().then(s => { if (!cancelled) setEquipStats(s); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Backfill the `attack` flag on already-saved spells (so older characters get To Hit too).
+  useEffect(() => {
+    const ch = characters.find(c => c.id === selectedId);
+    if (!ch || isDemo) return;
+    const missing = (ch.spells || []).filter(s => s.attack === undefined);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const flags = {};
+      for (const sp of missing) {
+        try {
+          const url = sp.slug
+            ? `https://api.open5e.com/v1/spells/${sp.slug}/`
+            : `https://api.open5e.com/v1/spells/?search=${encodeURIComponent(sp.name)}&limit=5`;
+          const data = await fetch(url).then(r => r.json());
+          const desc = sp.slug ? data.desc : ((data.results || []).find(x => x.name === sp.name) || {}).desc;
+          flags[sp.name] = /(ranged|melee) spell attack/i.test(desc || "");
+        } catch { flags[sp.name] = false; }
+      }
+      if (cancelled || Object.keys(flags).length === 0) return;
+      updateChar(c => ({ ...c, spells: (c.spells || []).map(s => (s.attack === undefined && s.name in flags ? { ...s, attack: flags[s.name] } : s)) }));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   // Load the signed-in user's saved characters; fall back to the sample party
   // as a read-only demo when logged out (or Supabase isn't configured).
@@ -607,6 +899,48 @@ export default function CharactersPage() {
     }));
   }
 
+  function applyLevelUp({ hpGain, asi }) {
+    updateChar(ch => {
+      let statScores = ch.statScores;
+      if (asi) {
+        statScores = { ...statScores };
+        for (const [ab, amt] of Object.entries(asi)) statScores[ab] = Math.min(20, (statScores[ab] ?? 10) + amt);
+      }
+      const next = {
+        ...ch,
+        level: (ch.level || 1) + 1,
+        statScores,
+        hp: { ...ch.hp, max: ch.hp.max + hpGain, current: ch.hp.current + hpGain },
+      };
+      return applyDerived(next); // recompute prof, mods, saves, skills, spell DC
+    });
+    setLevelUpOpen(false);
+  }
+
+  function spendHitDie() {
+    updateChar(ch => {
+      const die = hitDieFor(ch.class);
+      const heal = Math.max(0, 1 + Math.floor(Math.random() * die) + (ch.stats?.CON || 0));
+      return {
+        ...ch,
+        hitDiceUsed: (ch.hitDiceUsed || 0) + 1,
+        hp: { ...ch.hp, current: Math.min(ch.hp.max, ch.hp.current + heal) },
+      };
+    });
+  }
+
+  function longRest() {
+    updateChar(ch => {
+      const regain = Math.max(1, Math.floor((ch.level || 1) / 2));
+      return {
+        ...ch,
+        hp: { ...ch.hp, current: ch.hp.max, temp: 0 },
+        slotsUsed: {},
+        hitDiceUsed: Math.max(0, (ch.hitDiceUsed || 0) - regain),
+      };
+    });
+  }
+
   async function deleteChar() {
     if (isDemo || !char || deleteInput.trim() !== char.name) return;
     const id = char.id;
@@ -625,7 +959,7 @@ export default function CharactersPage() {
     if (isMobile) setSidebarOpen(false);
   }
 
-  const tabs = ["stats", "spells", "features", "equipped", "backpack", ...(char?.bio ? ["bio"] : [])];
+  const tabs = ["stats", "actions", "spells", "features", "equipped", "backpack", ...(char?.bio ? ["bio"] : [])];
   const card = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: t.radius };
 
   // Shared inventory item card, used by both the Equipped and Backpack tabs.
@@ -752,14 +1086,18 @@ export default function CharactersPage() {
             </div>
           </div>
 
-          {!isDemo && (
-            <button onClick={() => { setConfirmingDelete(true); setDeleteInput(""); }} title="Delete character"
-              style={{ flexShrink: 0, background: t.panelAlt, color: t.textDim, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, cursor: "pointer" }}>🗑</button>
-          )}
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <button onClick={() => setLevelUpOpen(true)} disabled={(char.level || 1) >= 20} title={(char.level || 1) >= 20 ? "Max level" : "Level up"}
+              style={{ background: (char.level || 1) >= 20 ? t.panelAlt : t.accentSoft, color: (char.level || 1) >= 20 ? t.textDim : t.accent, border: `1px solid ${(char.level || 1) >= 20 ? t.border : t.accent}`, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: (char.level || 1) >= 20 ? "default" : "pointer", whiteSpace: "nowrap" }}>⬆ Level Up</button>
+            {!isDemo && (
+              <button onClick={() => { setConfirmingDelete(true); setDeleteInput(""); }} title="Delete character"
+                style={{ background: t.panelAlt, color: t.textDim, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, cursor: "pointer" }}>🗑</button>
+            )}
+          </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
-          {[{ l: "Armor Class", v: char.ac }, { l: "Initiative", v: char.initiative }, { l: "Speed", v: `${char.speed} ft` }, { l: "Prof. Bonus", v: `+${char.proficiencyBonus}` }].map(s => (
+          {[{ l: "Armor Class", v: equipStats ? computeAC(char, equipStats) : char.ac }, { l: "Initiative", v: char.initiative }, { l: "Speed", v: `${char.speed} ft` }, { l: "Prof. Bonus", v: `+${char.proficiencyBonus}` }].map(s => (
             <div key={s.l} style={{ ...card, padding: "12px 14px", textAlign: "center" }}>
               <div style={{ fontSize: 24, fontWeight: 700 }}>{s.v}</div>
               <div style={{ fontSize: 10, color: t.textDim, textTransform: "uppercase", fontWeight: 600, marginTop: 2 }}>{s.l}</div>
@@ -783,6 +1121,10 @@ export default function CharactersPage() {
             </div>
           </div>
           {saveError && <div style={{ marginTop: 10, fontSize: 12, color: t.bad }}>Couldn't save: {saveError}</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <button onClick={() => setShortRestOpen(true)} style={{ flex: 1, minWidth: 120, background: t.panelAlt, border: `1px solid ${t.border}`, color: t.textMid, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>😴 Short Rest</button>
+            <button onClick={longRest} title="Restore HP, spell slots, and some Hit Dice" style={{ flex: 1, minWidth: 120, background: t.panelAlt, border: `1px solid ${t.border}`, color: t.textMid, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🌙 Long Rest</button>
+          </div>
         </div>
 
         <div style={{ ...card, marginBottom: 16, overflow: "hidden" }}>
@@ -799,6 +1141,10 @@ export default function CharactersPage() {
             <button key={tab} onClick={() => setActiveTab(tab)} style={{ flex: 1, border: "none", cursor: "pointer", background: activeTab === tab ? t.panel : "transparent", color: activeTab === tab ? t.accent : t.textMid, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 600, textTransform: "capitalize" }}>{tab}</button>
           ))}
         </div>
+
+        {activeTab === "actions" && (
+          <ActionsTab char={char} updateChar={updateChar} equipStats={equipStats} t={t} />
+        )}
 
         {activeTab === "stats" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -924,6 +1270,8 @@ export default function CharactersPage() {
         <ItemPicker onAdd={addItem} onClose={() => setItemPickerOpen(false)} t={t} />
       )}
       {infoItem && <ItemInfoModal item={infoItem} char={char} onClose={() => setInfoItem(null)} t={t} />}
+      {levelUpOpen && <LevelUpModal char={char} onConfirm={applyLevelUp} onClose={() => setLevelUpOpen(false)} t={t} />}
+      {shortRestOpen && <ShortRestModal char={char} onSpend={spendHitDie} onClose={() => setShortRestOpen(false)} t={t} />}
 
       {/* Type-the-name delete confirmation */}
       {confirmingDelete && !isDemo && char && (
