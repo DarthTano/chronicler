@@ -7,6 +7,7 @@ import AuthModal from "./components/AuthModal.jsx";
 import Onboarding from "./components/Onboarding.jsx";
 import CharactersPage from "./pages/CharactersPage.jsx";
 import BuilderPage from "./pages/BuilderPage.jsx";
+import CampaignsPage from "./pages/CampaignsPage.jsx";
 import CompendiumPage from "./pages/CompendiumPage.jsx";
 import DicePage from "./pages/DicePage.jsx";
 import ComingSoon from "./pages/ComingSoon.jsx";
@@ -189,7 +190,7 @@ export default function App() {
             <Route path="/compendium" element={<CompendiumPage />} />
             <Route path="/dice" element={<DicePage />} />
             <Route path="/dm-screen" element={<ComingSoon title="DM Screen" phase={3} blurb="Combat tracker, encounter builder, NPCs and world notes — wired into real character data." />} />
-            <Route path="/campaigns" element={<ComingSoon title="Campaigns" phase={4} blurb="The shared table. Link DMs and players, with live initiative everyone watches." />} />
+            <Route path="/campaigns" element={<CampaignsPage />} />
             <Route path="/community" element={<ComingSoon title="Community" phase={5} blurb="Share and discover homebrew, adventures, and AI-generated content." />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
